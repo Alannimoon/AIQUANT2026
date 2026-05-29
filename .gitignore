@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+.Python
+.venv/
+.eggs/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+.claude/
+
+# Secrets — never commit
+.env
+*.env
+AlphaAgent/.env
+
+# AlphaAgent runtime caches (large, machine-specific)
+AlphaAgent/git_ignore_folder/
+AlphaAgent/pickle_cache/
+AlphaAgent/log/
+AlphaAgent/run_logs/
+AlphaAgent/alphaagent.egg-info/
+
+# Stale Qlib data caches (regenerated on demand per AlphaAgent README)
+AlphaAgent/alphaagent/scenarios/qlib/experiment/factor_data_template/*.h5
+
+# Microsoft Qlib clone (reproducible; see scripts/README.md)
+# Anchored with leading / so it doesn't match AlphaAgent/alphaagent/scenarios/qlib/
+/qlib/
+
+# Jupyter
+.ipynb_checkpoints/
