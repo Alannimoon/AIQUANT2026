@@ -53,3 +53,7 @@ test = {file = ["requirements/test.txt"]}
 [tool.setuptools_scm]
 local_scheme = "no-local-version"
 version_scheme = "guess-next-dev"
+# Fallback: AIQUANT2026 fork removed the inner .git so the package version can no
+# longer be derived from git history. Pin a version so `pip install -e .` works
+# for collaborators who clone the parent repo without AlphaAgent's git metadata.
+fallback_version = "0.1.dev485"

@@ -82,17 +82,10 @@ class Graph(KnowledgeBase):
     @staticmethod
     def batch_embedding(nodes: list[Node]) -> list[Node]:
         contents = [node.content for node in nodes]
-        # openai create embedding API input's max length is 16
-        size = 16
-        embeddings = []
-        for i in range(0, len(contents), size):
-            embeddings.extend(
-                APIBackend().create_embedding(input_content=contents[i : i + size]),
-            )
-
-        assert len(nodes) == len(embeddings), "nodes' length must equals embeddings' length"
-        for node, embedding in zip(nodes, embeddings):
-            node.embedding = embedding
+        # DeepSeek has no embedding API; use dummy embeddings
+        import numpy as np
+        for node in nodes:
+            node.embedding = np.zeros(256).tolist()
         return nodes
 
     def __str__(self) -> str:

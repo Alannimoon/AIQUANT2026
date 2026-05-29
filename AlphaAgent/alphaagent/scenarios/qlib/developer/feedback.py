@@ -21,17 +21,12 @@ DIRNAME = Path(__file__).absolute().resolve().parent
 
 
 def process_results(current_result, sota_result):
-    # Convert the results to dataframes
-    current_df = pd.DataFrame(current_result)
-    sota_df = pd.DataFrame(sota_result)
+    # Convert Series to DataFrame with named columns
+    current_df = pd.DataFrame({"Current Result": current_result})
+    sota_df = pd.DataFrame({"SOTA Result": sota_result})
 
-    # Set the metric as the index
     current_df.index.name = "metric"
     sota_df.index.name = "metric"
-
-    # Rename the value column to reflect the result type
-    current_df.rename(columns={"0": "Current Result"}, inplace=True)
-    sota_df.rename(columns={"0": "SOTA Result"}, inplace=True)
 
     # Combine the dataframes on the Metric index
     combined_df = pd.concat([current_df, sota_df], axis=1)
@@ -44,8 +39,9 @@ def process_results(current_result, sota_result):
         "IC",
     ]
 
-    # Filter the combined DataFrame to retain only the important metrics
-    filtered_combined_df = combined_df.loc[important_metrics]
+    # Filter to only available metrics (skip missing ones like portfolio metrics)
+    available_metrics = [m for m in important_metrics if m in combined_df.index]
+    filtered_combined_df = combined_df.loc[available_metrics]
 
     filtered_combined_df[
         "Bigger columns name (Didn't consider the direction of the metric, you should judge it by yourself that bigger is better or smaller is better)"

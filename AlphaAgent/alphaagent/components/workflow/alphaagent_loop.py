@@ -87,6 +87,8 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
     @classmethod
     def load(cls, path, use_local: bool = True):
         """加载现有会话"""
+        global STOP_EVENT
+        STOP_EVENT = None
         instance = super().load(path)
         instance.use_local = use_local
         logger.info(f"加载AlphaAgentLoop，使用{'本地环境' if use_local else 'Docker容器'}回测")

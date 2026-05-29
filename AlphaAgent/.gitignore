@@ -66,7 +66,7 @@ coverage.xml
 # Django stuff:
 # *.log
 # /log/
-log/
+/log/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -182,7 +182,9 @@ mlruns/
 # alphaagent/scenarios/qlib/experiment/factor_data_template/
 alphaagent/app/qlib_rd_loop/factor_rdagent.py
 
-alphaagent/scenarios/qlib/experiment/factor_template/*
+# Was upstream-ignored to let each user keep machine-specific configs; we need
+# our patched conf.yaml + conf_cn_combined_kdd_ver.yaml tracked in the team repo.
+# alphaagent/scenarios/qlib/experiment/factor_template/*
 alphaagent/app/data_mining/
 alphaagent/app/general_model/
 alphaagent/app/kaggle/

@@ -42,8 +42,10 @@ class QlibFBWorkspace(FBWorkspace):
         )
 
         # 加载结果
-        ret_df = pd.read_pickle(self.workspace_path / "ret.pkl")
-        logger.log_object(ret_df, tag="Quantitative Backtesting Chart")
+        ret_pkl = self.workspace_path / "ret.pkl"
+        if ret_pkl.exists():
+            ret_df = pd.read_pickle(ret_pkl)
+            logger.log_object(ret_df, tag="Quantitative Backtesting Chart")
 
         csv_path = self.workspace_path / "qlib_res.csv"
         if not csv_path.exists():
