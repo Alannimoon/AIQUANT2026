@@ -14,16 +14,17 @@ AIQUANT2026/
 │   ├── elitealpha_proposal.pdf       # original project proposal
 │   └── AlphaAgent_walkthrough.md     # how AlphaAgent works + our patches
 ├── scripts/
-│   ├── fetch_sh000905.py             # baostock fetcher (network can be flaky)
-│   └── fetch_sh000905_ak.py          # akshare fetcher (Sina endpoint, more reliable)
+│   ├── fetch_sh000905.py             # DEPRECATED: chenditc bundles SH000905. Kept for reference only.
+│   └── fetch_sh000905_ak.py          # DEPRECATED: same as above.
 └── README.md                         # this file
 ```
 
 ## AlphaAgent baseline status
 
 - Forked from upstream commit `1da96e94` (`RndmVariableQ/AlphaAgent`, KDD 2025)
-- 7 local patches applied for DeepSeek + local CN data adaptation. See `docs/AlphaAgent_walkthrough.md` §7
-- One full Loop 0 with portfolio metrics recorded (IC=0.062, Rank IC=0.0396, excess AR=-9.54%)
+- 7 local patches applied for DeepSeek + chenditc data adaptation. See `docs/AlphaAgent_walkthrough.md` §7
+- End-to-end mine + backtest pipeline verified; full portfolio metrics (IC / RankIC / AR / IR / MDD) produced per loop
+- Multi-loop baseline numbers TBD — single-loop runs have high variance; will collect distribution across 5+ full runs
 
 ## Quick start (new team member)
 
@@ -39,23 +40,19 @@ cp .env.example .env
 # Edit .env: set OPENAI_BASE_URL=https://api.deepseek.com, OPENAI_API_KEY=<your_key>,
 #           CHAT_MODEL=deepseek-chat, REASONING_MODEL=deepseek-chat
 
-# 3. Ensure Qlib CN data is in ~/.qlib/qlib_data/cn_data/
-# (auto-downloads on first qrun if missing, or use AlphaAgent/prepare_cn_data.py)
+# 3. Download Qlib CN data from chenditc/investment_data (recommended source)
+#    ~550 MB tarball, extracts to ~3 GB. Includes proper CSI500 universe membership
+#    history (1774 codes across windows), SH000905 benchmark, vwap/adjclose fields.
+#    See https://github.com/chenditc/investment_data/releases for the latest release tag.
+LATEST_TAG=$(curl -sL https://api.github.com/repos/chenditc/investment_data/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+wget -O /tmp/qlib_bin.tar.gz https://github.com/chenditc/investment_data/releases/download/${LATEST_TAG}/qlib_bin.tar.gz
+mkdir -p ~/.qlib/qlib_data/cn_data
+tar -zxf /tmp/qlib_bin.tar.gz -C ~/.qlib/qlib_data/cn_data --strip-components=1
+rm /tmp/qlib_bin.tar.gz
+# Verify:
+ls ~/.qlib/qlib_data/cn_data/   # should show: calendars  features  instruments
 
-# 4. (One-time) Add SH000905 benchmark — Sina endpoint is most reliable
-conda activate base  # need pandas>=2.0 for akshare
-env -u http_proxy -u https_proxy -u all_proxy python scripts/fetch_sh000905_ak.py
-# Then dump it into qlib data:
-mkdir -p /tmp/sh000905_dump && cp ~/.qlib/qlib_data/cn_data/raw_data_back_adjust/sh000905.csv /tmp/sh000905_dump/
-# Need qlib source for dump_bin.py:
-git clone --depth 1 https://github.com/microsoft/qlib.git
-conda run -n alphaagent python qlib/scripts/dump_bin.py dump_update \
-  --data_path /tmp/sh000905_dump \
-  --qlib_dir ~/.qlib/qlib_data/cn_data \
-  --include_fields open,high,low,close,preclose,volume,amount,turn,factor \
-  --symbol_field_name code --date_field_name date
-
-# 5. Run AlphaAgent baseline
+# 4. Run AlphaAgent baseline
 cd AlphaAgent
 conda run -n alphaagent --no-capture-output alphaagent mine \
     --potential_direction "your market hypothesis" \
@@ -67,8 +64,8 @@ tail -F run_logs/run_NNN.log
 
 - **Never commit `.env`** — contains DeepSeek API key. Already gitignored.
 - **Caches are gitignored** (`AlphaAgent/git_ignore_folder/`, `pickle_cache/`, `log/`, `run_logs/`). Each member's caches are local.
-- **AlphaAgent's RAG / knowledge graph is stubbed** (3 of our 7 patches) because DeepSeek has no embedding API. Don't be confused by what looks like "RAG retrieval" — it's a no-op.
-- **`conf.yaml` and `conf_cn_combined_kdd_ver.yaml` have PortAnaRecord enabled** (re-enabled after we got SH000905). If you see `LoadObjectError: report_normal_1day.pkl`, check that SH000905 is in your `~/.qlib/qlib_data/cn_data`.
+- **AlphaAgent's RAG knowledge base is silently disabled** via `knowledge_self_gen=False` in `alphaagent_loop.py:73`. This keeps the CoSTEER knowledge base empty so `calculate_embedding_distance_between_str_list` short-circuits (no /v1/embeddings call needed). Don't be confused by what looks like "RAG retrieval" — it's a no-op for now.
+- **`conf.yaml` and `conf_cn_combined_kdd_ver.yaml` have PortAnaRecord enabled**. The benchmark SH000905 ships with the chenditc data tarball. If you see `LoadObjectError: report_normal_1day.pkl`, check that SH000905 is in `~/.qlib/qlib_data/cn_data/features/`.
 - **Do not modify `AlphaAgent/.env.example`** — keep it pristine for upstream parity.
 
 ## Read this before coding ELITEALPHA
