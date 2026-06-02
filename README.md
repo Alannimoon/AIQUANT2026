@@ -72,6 +72,32 @@ tail -F run_logs/run_NNN.log
 
 `docs/AlphaAgent_walkthrough.md` covers how the 5-step loop works, what gets called, where artifacts land. Read §3 (execution flow) and §10 (integration points for MAP-Elites) before writing any new code.
 
+## Setup gotchas (collected from team setup runs)
+
+If `pip install -e .` succeeds but `alphaagent mine` crashes, it's almost
+certainly one of these:
+
+- **`ModuleNotFoundError: No module named 'rich'`** — fixed; `rich` is now in
+  `requirements.txt`. If your env predates the fix, `pip install rich`.
+- **`ModuleNotFoundError: No module named 'qlib'`** — fixed; `pyqlib` is now
+  in `requirements.txt`. If your env predates the fix, `pip install pyqlib`.
+- **`MlflowException: filesystem tracking backend ... maintenance mode`** —
+  fixed; `.env.example` now ships `MLFLOW_ALLOW_FILE_STORE=true`. Make sure
+  your `.env` has that line.
+- **`Using SOCKS proxy, but the 'socksio' package is not installed`** —
+  you have an HTTP/SOCKS proxy env var leaking into the mine process. Don't
+  proxy DeepSeek API (it's domestic). Before running mine:
+  ```bash
+  unset http_proxy https_proxy all_proxy
+  ```
+- **`daily_pv_all.h5 is not generated`** — Qlib first-run cache build.
+  Either let `alphaagent mine` retry (it will run `generate.py` itself), or
+  manually:
+  ```bash
+  cd AlphaAgent/alphaagent/scenarios/qlib/experiment/factor_data_template
+  python generate.py  # ~2-3 min, loads all instruments into pandas
+  ```
+
 ## Upstream
 
 AlphaAgent at commit `1da96e94a06a925c3997899f1848899440585efe`:

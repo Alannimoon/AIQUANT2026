@@ -7,6 +7,8 @@ loguru
 fire
 fuzzywuzzy
 openai
+rich         # used by alphaagent.utils.env; upstream forgot to list it
+pyqlib       # Qlib backtest engine; upstream README tells users to clone+install manually
 
 scikit-learn==1.6.1
 xgboost==3.0.0
