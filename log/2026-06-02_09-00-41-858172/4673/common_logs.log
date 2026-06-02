@@ -1,2 +1,0 @@
-2026-06-02 09:00:42.827 | WARNING  | alphaagent.oai.llm_utils:<module>:39 - azure.identity is not installed.
-2026-06-02 09:00:43.318 | WARNING  | alphaagent.oai.llm_utils:<module>:49 - llama is not installed.

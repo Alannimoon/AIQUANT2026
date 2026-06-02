@@ -28,6 +28,9 @@ AlphaAgent/log/
 AlphaAgent/run_logs/
 AlphaAgent/alphaagent.egg-info/
 
+# loguru drops `log/` in whatever cwd alphaagent gets imported from
+/log/
+
 # Stale Qlib data caches (regenerated on demand per AlphaAgent README)
 AlphaAgent/alphaagent/scenarios/qlib/experiment/factor_data_template/*.h5
 
