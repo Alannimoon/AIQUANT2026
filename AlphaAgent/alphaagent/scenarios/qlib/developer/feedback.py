@@ -30,7 +30,12 @@ def process_results(current_result, sota_result):
     if hasattr(sota_result, "index"):
         sota_df = pd.DataFrame({"SOTA Result": sota_result})
     else:
-        sota_df = pd.DataFrame({"SOTA Result": pd.NA}, index=current_df.index)
+        # First loop: no SOTA yet. Fill with -inf so the downstream lambda
+        # `Current > SOTA` always picks Current (we have no benchmark to beat).
+        sota_df = pd.DataFrame(
+            {"SOTA Result": [float("-inf")] * len(current_df)},
+            index=current_df.index,
+        )
 
     current_df.index.name = "metric"
     sota_df.index.name = "metric"
