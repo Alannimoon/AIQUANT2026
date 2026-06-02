@@ -21,9 +21,16 @@ DIRNAME = Path(__file__).absolute().resolve().parent
 
 
 def process_results(current_result, sota_result):
-    # Convert Series to DataFrame with named columns
+    # Convert Series to DataFrame with named columns. On the very first loop
+    # `sota_result` can come through as a scalar (no prior SOTA yet) which the
+    # dict-of-scalar form of pd.DataFrame rejects; in that case, build an empty
+    # SOTA column indexed by the current metrics so the downstream `concat`
+    # still works.
     current_df = pd.DataFrame({"Current Result": current_result})
-    sota_df = pd.DataFrame({"SOTA Result": sota_result})
+    if hasattr(sota_result, "index"):
+        sota_df = pd.DataFrame({"SOTA Result": sota_result})
+    else:
+        sota_df = pd.DataFrame({"SOTA Result": pd.NA}, index=current_df.index)
 
     current_df.index.name = "metric"
     sota_df.index.name = "metric"
