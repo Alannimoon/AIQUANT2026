@@ -84,34 +84,73 @@ cleanup_after_mine() {
   echo "    ...saved $saved metric file(s), freed disk; ${free} now free"
 }
 
+run_one_phase() {
+  # Args:
+  #   $1 = phase tag (A or C). Used as a prefix in log filenames and metric
+  #         filenames so the two phases never overwrite each other.
+  #   $2 = depth cap, an integer or empty. When set, exported as
+  #         ALPHAAGENT_DEPTH_CAP so the FactorRegulator rejects expressions
+  #         deeper than this. When empty, no cap.
+  local phase="$1"
+  local cap="$2"
+
+  if [ -n "$cap" ]; then
+    export ALPHAAGENT_DEPTH_CAP="$cap"
+    local phase_label="phase ${phase} (depth_cap=${cap})"
+  else
+    unset ALPHAAGENT_DEPTH_CAP
+    local phase_label="phase ${phase} (no cap)"
+  fi
+
+  echo "" | tee -a run_logs/baseline_summary.log
+  echo "############################################" | tee -a run_logs/baseline_summary.log
+  echo "### START ${phase_label} at $(date)" | tee -a run_logs/baseline_summary.log
+  echo "############################################" | tee -a run_logs/baseline_summary.log
+
+  local phase_start=$(date +%s)
+  local total=$((${#DIRECTIONS[@]}/2))
+
+  for ((i=0; i<${#DIRECTIONS[@]}; i+=2)); do
+    local idx=$((i/2))
+    local slug="${DIRECTIONS[$i]}"
+    local prompt="${DIRECTIONS[$i+1]}"
+    local log="run_logs/baseline_${phase}_$(printf '%02d' "$idx")_${slug}.log"
+
+    printf '\n--- %s [%d/%d] %-15s | starting %s\n' \
+      "$phase" "$((idx+1))" "$total" "$slug" "$(date '+%H:%M:%S')" \
+      | tee -a run_logs/baseline_summary.log
+
+    local start=$(date +%s)
+    local status="OK"
+    if ! alphaagent mine --potential_direction "$prompt" --step_n "$STEP_N" \
+         > "$log" 2>&1; then
+      status="FAIL(exit=$?)"
+    fi
+    local end=$(date +%s)
+    printf -- '--- %s [%d/%d] %-15s | %s after %4d s | %s\n' \
+      "$phase" "$((idx+1))" "$total" "$slug" "$status" "$((end-start))" "$log" \
+      | tee -a run_logs/baseline_summary.log
+
+    cleanup_after_mine "${phase}_${slug}" | tee -a run_logs/baseline_summary.log
+  done
+
+  local phase_end=$(date +%s)
+  local elapsed=$((phase_end-phase_start))
+  printf -- '\n### END %s at %s, total %dm%02ds\n' \
+    "$phase_label" "$(date)" $((elapsed/60)) $((elapsed%60)) \
+    | tee -a run_logs/baseline_summary.log
+}
+
 start_global=$(date +%s)
 echo "=== baseline runner started at $(date) ===" | tee -a run_logs/baseline_summary.log
 
-for ((i=0; i<${#DIRECTIONS[@]}; i+=2)); do
-  idx=$((i/2))
-  slug="${DIRECTIONS[$i]}"
-  prompt="${DIRECTIONS[$i+1]}"
-  log="run_logs/baseline_$(printf '%02d' "$idx")_${slug}.log"
+# Phase A: prompt-only hint, no hard depth cap.
+run_one_phase "A" ""
 
-  printf '\n--- [%d/%d] %-15s | starting %s\n' \
-    "$((idx+1))" "$((${#DIRECTIONS[@]}/2))" "$slug" "$(date '+%H:%M:%S')" \
-    | tee -a run_logs/baseline_summary.log
-
-  start=$(date +%s)
-  if alphaagent mine --potential_direction "$prompt" --step_n "$STEP_N" \
-       > "$log" 2>&1
-  then
-    status="OK"
-  else
-    status="FAIL(exit=$?)"
-  fi
-  end=$(date +%s)
-  printf -- '--- [%d/%d] %-15s | %s after %4d s | %s\n' \
-    "$((idx+1))" "$((${#DIRECTIONS[@]}/2))" "$slug" "$status" "$((end-start))" "$log" \
-    | tee -a run_logs/baseline_summary.log
-
-  cleanup_after_mine "$slug" | tee -a run_logs/baseline_summary.log
-done
+# Phase C: hard depth cap = 5 (matches ELITEALPHA §3.2 default L).
+# FactorRegulator now rejects anything deeper than this, and the LLM gets
+# fed back the rejection feedback inside CoSTEER's debug loop.
+run_one_phase "C" "5"
 
 end_global=$(date +%s)
 total=$((end_global-start_global))
@@ -121,10 +160,8 @@ printf -- '\n=== baseline runner done at %s, total %dm%02ds ===\n' \
 # Roll up depth/category by direction using the (now improved) ast_depth.py.
 echo "" | tee -a run_logs/baseline_summary.log
 echo "=== category x depth per direction ===" | tee -a run_logs/baseline_summary.log
-for f in run_logs/baseline_*.log; do
-  case "$(basename "$f")" in
-    baseline_summary.log) continue ;;
-  esac
+for f in run_logs/baseline_[AC]_*.log; do
+  [ -f "$f" ] || continue
   echo "--- $(basename "$f" .log)" | tee -a run_logs/baseline_summary.log
   python "$REPO_ROOT/scripts/ast_depth.py" --from-log "$f" 2>/dev/null \
     | grep -E "^(Analyzed|category|momentum|reversal|volatility|volume_price|cross_section|other|Depth histogram|---)" \

@@ -1,11 +1,39 @@
+import math
+import os
 import pandas as pd
 import numpy as np
 from typing import Tuple, List, Dict, Any, Optional
 from alphaagent.core.evaluation import Evaluator
 from alphaagent.log import logger
 from alphaagent.core.scenario import Scenario
-from alphaagent.components.coder.factor_coder.factor_ast import match_alphazoo, count_free_args, count_unique_vars, count_all_nodes
+from alphaagent.components.coder.factor_coder.factor_ast import (
+    count_all_nodes,
+    count_depth,
+    count_free_args,
+    count_unique_vars,
+    match_alphazoo,
+)
 from alphaagent.components.coder.factor_coder.expr_parser import parse_expression
+
+
+def _read_depth_cap() -> float:
+    """ALPHAAGENT_DEPTH_CAP env var: integer >=1 = hard cap on AST depth,
+    unset / empty / "0" / "inf" = no cap. Read once per process at import time.
+    """
+    raw = os.environ.get("ALPHAAGENT_DEPTH_CAP", "").strip().lower()
+    if not raw or raw in ("0", "none", "inf", "infinity"):
+        return math.inf
+    try:
+        v = int(raw)
+        if v <= 0:
+            return math.inf
+        return float(v)
+    except ValueError:
+        logger.warning(
+            f"ALPHAAGENT_DEPTH_CAP={raw!r} not parseable as int; treating as no cap."
+        )
+        return math.inf
+
 
 class FactorRegulator(Evaluator):
     """
@@ -13,14 +41,18 @@ class FactorRegulator(Evaluator):
     This class provides functionality to detect duplicated subtrees in factor expressions
     and ensure new factors maintain appropriate originality.
     """
-    
-    def __init__(self, factor_zoo_path: str = None, duplication_threshold: int = 8):
+
+    def __init__(self, factor_zoo_path: str = None, duplication_threshold: int = 8,
+                 depth_cap: Optional[float] = None):
         """
         Initialize the FactorRegulator with a reference to the factor zoo.
-        
+
         Args:
             factor_zoo_path (str): Path to the CSV file containing the factor zoo database.
             duplication_threshold (int): Threshold for duplication detection.
+            depth_cap (float | None): Reject expressions whose AST depth exceeds
+                this value. If None, read from ALPHAAGENT_DEPTH_CAP env var
+                (unset means math.inf, i.e. no cap).
         """
         super().__init__(None)
         self.factor_zoo_path = factor_zoo_path
@@ -29,6 +61,9 @@ class FactorRegulator(Evaluator):
         else:
             self.alphazoo = pd.DataFrame()
         self.duplication_threshold = duplication_threshold
+        self.depth_cap = depth_cap if depth_cap is not None else _read_depth_cap()
+        if self.depth_cap != math.inf:
+            logger.info(f"FactorRegulator: depth_cap={int(self.depth_cap)}")
         self.new_factors = []
         
     
@@ -72,23 +107,26 @@ class FactorRegulator(Evaluator):
             num_free_args = count_free_args(expression)
             num_unique_vars = count_unique_vars(expression)
             num_all_nodes = count_all_nodes(expression)
-            
+            ast_depth = count_depth(expression)
+
             logger.info(f"""
                         Evaluated expr: {expression}
                         Duplicated Size: {duplicated_subtree_size}
                         Duplicated Subtree: {duplicated_subtree}
                         # Free Args: {num_free_args}
                         # Unique Vars: {num_unique_vars}
+                        AST Depth: {ast_depth} (cap={self.depth_cap if self.depth_cap != math.inf else 'none'})
                         """)
-            
+
             eval_dict = {
                 "expr": expression,
-                "duplicated_subtree_size": duplicated_subtree_size, 
+                "duplicated_subtree_size": duplicated_subtree_size,
                 "duplicated_subtree": duplicated_subtree,
                 "matched_alpha": matched_alpha,
                 "num_free_args": num_free_args,
                 "num_unique_vars": num_unique_vars,
-                "num_all_nodes": num_all_nodes
+                "num_all_nodes": num_all_nodes,
+                "ast_depth": ast_depth,
                 }
             
             return True, eval_dict
@@ -111,7 +149,19 @@ class FactorRegulator(Evaluator):
         """
         # Condition 1: Check if the duplicated subtree size is within the threshold
         cond1 = eval_dict['duplicated_subtree_size'] <= self.duplication_threshold
-        
+
+        # Condition AST depth: reject expressions deeper than the cap. The cap
+        # is unset by default; set ALPHAAGENT_DEPTH_CAP=N to reject any factor
+        # whose AST depth exceeds N (see ELITEALPHA §3.2 — depth=5 is a typical
+        # value for the complexity axis).
+        ast_depth = eval_dict.get('ast_depth', 0)
+        cond_depth = ast_depth <= self.depth_cap
+        if not cond_depth:
+            logger.info(
+                f"FactorRegulator reject: depth={ast_depth} > cap={int(self.depth_cap)} "
+                f"for expression: {eval_dict.get('expr', '?')[:80]}..."
+            )
+
         # Get the number of free arguments, unique variables, and total nodes
         num_free_args = eval_dict['num_free_args']
         num_unique_vars = eval_dict['num_unique_vars']
@@ -140,7 +190,7 @@ class FactorRegulator(Evaluator):
         cond3 = -np.log(1 - unique_vars_ratio) < 0.693  # Threshold for x < 0.5
         
         # The expression is acceptable if all conditions are met
-        return cond1 and cond2 and cond3
+        return cond1 and cond2 and cond3 and cond_depth
     
             
     def add_factor(self, factor_name: str, factor_expression: str) -> bool:

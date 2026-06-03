@@ -27,57 +27,8 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "AlphaAgent"))
 
 from alphaagent.components.coder.factor_coder.factor_ast import (  # noqa: E402
-    BinaryOpNode,
-    ConditionalNode,
-    FunctionNode,
-    Node,
-    NumberNode,
-    VarNode,
-    parse_expression,
+    count_depth as factor_depth,
 )
-
-
-# ---------------------------------------------------------------------------
-# Depth
-# ---------------------------------------------------------------------------
-def depth(node: Node) -> int:
-    """AST depth: leaves count as 1, every nesting layer adds 1."""
-    if isinstance(node, (VarNode, NumberNode)):
-        return 1
-    if isinstance(node, FunctionNode):
-        return 1 + max((depth(a) for a in node.args), default=0)
-    if isinstance(node, BinaryOpNode):
-        return 1 + max(depth(node.left), depth(node.right))
-    if isinstance(node, ConditionalNode):
-        return 1 + max(
-            depth(node.condition), depth(node.true_expr), depth(node.false_expr)
-        )
-    raise TypeError(f"Unknown node type: {type(node).__name__}")
-
-
-def _naive_paren_depth(expr: str) -> int:
-    """Fallback depth: max parenthesis nesting + 1. Robust to unknown operators
-    (GROUP_MEAN, MAX, EXP, ...) and partial syntax, at the cost of being a bit
-    coarser than the formal AST measure."""
-    max_d = cur = 0
-    for c in expr:
-        if c == "(":
-            cur += 1
-            if cur > max_d:
-                max_d = cur
-        elif c == ")":
-            cur -= 1
-    return max_d + 1  # leaves themselves count as 1
-
-
-def factor_depth(expr: str) -> int:
-    """Try the formal AlphaAgent parser; fall back to paren nesting when the
-    parser bails on operators it doesn't know (a recurring case in LLM outputs
-    that invent fields like `sector` or call GROUP_MEAN)."""
-    try:
-        return depth(parse_expression(expr))
-    except Exception:
-        return _naive_paren_depth(expr)
 
 
 # ---------------------------------------------------------------------------
