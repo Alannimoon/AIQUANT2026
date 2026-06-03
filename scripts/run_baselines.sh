@@ -55,6 +55,35 @@ DIRECTIONS=(
 # --step_n 25 ~= 5 loops (5 steps each). Adjust if you want longer/shorter mines.
 STEP_N=25
 
+# Where to stash qlib_res.csv files so per-mine cleanup doesn't lose IC data.
+METRICS_DIR="$HOME/baseline_metrics"
+mkdir -p "$METRICS_DIR"
+
+# After each mine: pull every qlib_res.csv into METRICS_DIR (tagged by the
+# direction slug + workspace id), then nuke the big files inside each
+# workspace. We keep factor.py (~few KB) and the small mlruns dir so the
+# pickle session in AlphaAgent/log/ stays self-contained for Streamlit UI.
+cleanup_after_mine() {
+  local slug="$1"
+  local saved=0
+  for d in git_ignore_folder/RD-Agent_workspace/*/; do
+    [ -d "$d" ] || continue
+    if [ -f "$d/qlib_res.csv" ]; then
+      wsid=$(basename "$d" | head -c 8)
+      cp "$d/qlib_res.csv" "$METRICS_DIR/${slug}_${wsid}.csv" \
+        && saved=$((saved+1))
+    fi
+  done
+  # Reclaim the bulk of the per-workspace footprint.
+  find git_ignore_folder/RD-Agent_workspace/ -name "daily_pv.h5" -delete 2>/dev/null
+  find git_ignore_folder/RD-Agent_workspace/ -name "result.h5"   -delete 2>/dev/null
+  # pickle_cache is RD-Agent's LLM response cache; we don't replay so nuke it.
+  rm -rf pickle_cache/* 2>/dev/null
+  local free
+  free=$(df -h / | awk 'NR==2 {print $4}')
+  echo "    ...saved $saved metric file(s), freed disk; ${free} now free"
+}
+
 start_global=$(date +%s)
 echo "=== baseline runner started at $(date) ===" | tee -a run_logs/baseline_summary.log
 
@@ -77,19 +106,27 @@ for ((i=0; i<${#DIRECTIONS[@]}; i+=2)); do
     status="FAIL(exit=$?)"
   fi
   end=$(date +%s)
-  printf '--- [%d/%d] %-15s | %s after %4d s | %s\n' \
+  printf -- '--- [%d/%d] %-15s | %s after %4d s | %s\n' \
     "$((idx+1))" "$((${#DIRECTIONS[@]}/2))" "$slug" "$status" "$((end-start))" "$log" \
     | tee -a run_logs/baseline_summary.log
+
+  cleanup_after_mine "$slug" | tee -a run_logs/baseline_summary.log
 done
 
 end_global=$(date +%s)
 total=$((end_global-start_global))
-printf '\n=== baseline runner done at %s, total %dm%02ds ===\n' \
+printf -- '\n=== baseline runner done at %s, total %dm%02ds ===\n' \
   "$(date)" $((total/60)) $((total%60)) | tee -a run_logs/baseline_summary.log
 
-# Quick summary of every backtest in this batch.
+# Roll up depth/category by direction using the (now improved) ast_depth.py.
 echo "" | tee -a run_logs/baseline_summary.log
-echo "=== per-workspace metrics (latest first) ===" | tee -a run_logs/baseline_summary.log
-python "$REPO_ROOT/scripts/ast_depth.py" \
-  --scan-workspaces "$ALPHAAGENT_DIR/git_ignore_folder/RD-Agent_workspace" \
-  2>/dev/null | tee -a run_logs/baseline_summary.log || true
+echo "=== category x depth per direction ===" | tee -a run_logs/baseline_summary.log
+for f in run_logs/baseline_*.log; do
+  case "$(basename "$f")" in
+    baseline_summary.log) continue ;;
+  esac
+  echo "--- $(basename "$f" .log)" | tee -a run_logs/baseline_summary.log
+  python "$REPO_ROOT/scripts/ast_depth.py" --from-log "$f" 2>/dev/null \
+    | grep -E "^(Analyzed|category|momentum|reversal|volatility|volume_price|cross_section|other|Depth histogram|---)" \
+    | tee -a run_logs/baseline_summary.log || true
+done

@@ -55,9 +55,29 @@ def depth(node: Node) -> int:
     raise TypeError(f"Unknown node type: {type(node).__name__}")
 
 
+def _naive_paren_depth(expr: str) -> int:
+    """Fallback depth: max parenthesis nesting + 1. Robust to unknown operators
+    (GROUP_MEAN, MAX, EXP, ...) and partial syntax, at the cost of being a bit
+    coarser than the formal AST measure."""
+    max_d = cur = 0
+    for c in expr:
+        if c == "(":
+            cur += 1
+            if cur > max_d:
+                max_d = cur
+        elif c == ")":
+            cur -= 1
+    return max_d + 1  # leaves themselves count as 1
+
+
 def factor_depth(expr: str) -> int:
-    """Parse a factor expression string and return its AST depth."""
-    return depth(parse_expression(expr))
+    """Try the formal AlphaAgent parser; fall back to paren nesting when the
+    parser bails on operators it doesn't know (a recurring case in LLM outputs
+    that invent fields like `sector` or call GROUP_MEAN)."""
+    try:
+        return depth(parse_expression(expr))
+    except Exception:
+        return _naive_paren_depth(expr)
 
 
 # ---------------------------------------------------------------------------
@@ -67,16 +87,40 @@ def factor_depth(expr: str) -> int:
 # expression text. Order matters: first match wins. This is a coarse stand-in
 # for the LLM-based classifier the paper proposes; good enough to bucket the
 # manual MAP-Elites runs we'll do.
+# Order matters: more specific signatures come first.
 _CATEGORY_RULES = [
-    ("volume_price",  [r"\$volume", r"\$amount", r"\$vwap"]),
-    ("volatility",    [r"TS_STD", r"TS_VAR", r"TS_MAD", r"BB_UPPER", r"BB_LOWER"]),
-    ("reversal",      [r"DELAY\(\$return", r"-\s*TS_SUM\(\$return",
-                       r"SIGN\(\s*-\s*"]),
-    ("cross_section", [r"^RANK", r"^ZSCORE", r"^MEAN", r"^STD",
-                       r"PERCENTILE", r"REGBETA", r"REGRESI"]),
-    ("momentum",      [r"TS_SUM\(\$return", r"\$close\s*/\s*DELAY\(\$close",
-                       r"TS_MEAN\(\$return", r"DELTA\(\$close",
-                       r"RSI", r"MACD"]),
+    # volume_price wins whenever any volume/amount/vwap field is used.
+    ("volume_price", [r"\$volume", r"\$amount", r"\$vwap"]),
+
+    # volatility: explicit dispersion measures over returns/prices.
+    ("volatility", [r"TS_STD\(\$return",
+                    r"TS_VAR\(\$return",
+                    r"TS_STD\(\$close",
+                    r"TS_MAD",
+                    r"BB_UPPER", r"BB_LOWER"]),
+
+    # reversal: negated returns or distance-from-recent-high gating.
+    ("reversal", [r"-\s*1\s*\*\s*TS_SUM\(\$return",
+                  r"\(\s*-\s*TS_SUM\(\$return",
+                  r"TS_SUM\(\$return[^)]*\)\s*<\s*0",
+                  r"\$close\s*<\s*0\.\d+\s*\*\s*TS_MAX",
+                  r"DELAY\(\$close,\s*\d+\)\s*-\s*\$open"]),
+
+    # cross_section: RANK/ZSCORE as the outermost wrap of the factor.
+    ("cross_section", [r"^\s*\(*\s*RANK\(",
+                       r"^\s*\(*\s*ZSCORE\(",
+                       r"^\s*\(*\s*PERCENTILE\(",
+                       r"REGBETA", r"REGRESI"]),
+
+    # momentum: any return-based aggregation that the rules above didn't claim.
+    ("momentum", [r"TS_SUM\(\$return",
+                  r"TS_MEAN\(\$return",
+                  r"WMA\(\$return",
+                  r"DECAYLINEAR\(\$return",
+                  r"EMA\(\$return",
+                  r"\$close\s*/\s*DELAY\(\$close",
+                  r"DELTA\(\$close",
+                  r"RSI", r"MACD"]),
 ]
 
 
@@ -92,13 +136,30 @@ def classify(expr: str) -> str:
 # ---------------------------------------------------------------------------
 # Log mining
 # ---------------------------------------------------------------------------
-_EXPR_LINE = re.compile(r"factor_expression:\s+(.+)$")
+_EXPR_LINE = re.compile(r"factor_expression:\s+(.+?)\s*$")
+# Reject capture groups that look like log preludes (timestamp + log-level)
+# or that don't contain at least one factor-shaped token ($var or func name(...).
+_LOOKS_LIKE_LOGLINE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}")
+_LOOKS_LIKE_EXPR = re.compile(r"[\$A-Z_][\w$]*\s*\(|\$[A-Za-z_]+")
 
 
 def extract_expressions_from_log(log_path: Path) -> list[str]:
-    """Pull every `factor_expression: ...` line out of a mine log."""
+    """Pull every `factor_expression: ...` line out of a mine log, filtering
+    captures that are clearly log noise (timestamps, summary lines) rather
+    than real factor expressions."""
+    out: list[str] = []
     with log_path.open("r", encoding="utf-8", errors="replace") as f:
-        return [m.group(1).strip() for line in f if (m := _EXPR_LINE.search(line))]
+        for line in f:
+            m = _EXPR_LINE.search(line)
+            if not m:
+                continue
+            expr = m.group(1).strip()
+            if _LOOKS_LIKE_LOGLINE.match(expr):
+                continue
+            if not _LOOKS_LIKE_EXPR.search(expr):
+                continue
+            out.append(expr)
+    return out
 
 
 def scan_workspaces(workspace_root: Path) -> list[tuple[str, str | None, dict]]:
