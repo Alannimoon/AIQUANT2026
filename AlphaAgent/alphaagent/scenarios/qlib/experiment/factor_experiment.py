@@ -82,6 +82,12 @@ The simulator user can use to test your factor:
 
 
 alphaagent_prompt_dict = Prompts(file_path=Path(__file__).parent / "prompts_alphaagent.yaml")
+
+
+def _append_prompt(base_prompt: str, extra_prompt: str) -> str:
+    return f"{base_prompt.rstrip()}\n\n{extra_prompt.strip()}"
+
+
 class QlibAlphaAgentScenario(Scenario):
     def __init__(self, use_local: bool = True) -> None:
         super().__init__()
@@ -137,3 +143,21 @@ The interface you should follow to write the runnable code:
 The simulator user can use to test your factor:
 {self.simulator}
 """
+
+
+elitealpha_prompt_dict = Prompts(file_path=Path(__file__).parent / "prompts_elitealpha.yaml")
+
+
+class QlibEliteAlphaScenario(QlibAlphaAgentScenario):
+    def __init__(self, use_local: bool = True) -> None:
+        super().__init__(use_local=use_local)
+        self._background = _append_prompt(
+            self._background,
+            deepcopy(elitealpha_prompt_dict["qlib_elitealpha_background"]),
+        )
+        self._strategy = _append_prompt(
+            self._strategy,
+            deepcopy(elitealpha_prompt_dict["qlib_elitealpha_strategy"]),
+        )
+        self._rich_style_description = deepcopy(elitealpha_prompt_dict["qlib_elitealpha_rich_style_description"])
+        self._experiment_setting = deepcopy(elitealpha_prompt_dict["qlib_elitealpha_experiment_setting"])

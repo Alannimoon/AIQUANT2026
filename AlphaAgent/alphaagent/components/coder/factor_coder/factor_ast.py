@@ -158,6 +158,22 @@ def create_binary_op_node(tokens):
         result = BinaryOpNode(tokens[i], result, unwrap(tokens[i+1]))
     return result
 
+def create_unary_op_node(tokens):
+    tokens = tokens[0]
+
+    def unwrap(arg):
+        if isinstance(arg, (list, ParseResults)):
+            if len(arg) == 1:
+                return unwrap(arg[0])
+            return [unwrap(x) for x in arg]
+        return arg
+
+    op = tokens[0]
+    operand = unwrap(tokens[1])
+    if op == "+":
+        return operand
+    return BinaryOpNode("*", NumberNode(-1.0), operand)
+
 def create_conditional_node(tokens):
     tokens = tokens[0]
     def unwrap(arg):
@@ -191,6 +207,7 @@ operand = function_call | var | number | ("(" + expr + ")").setParseAction(lambd
 expr <<= infixNotation(
     operand,
     [
+        (add_sub, 1, opAssoc.RIGHT, create_unary_op_node),
         (mul_div, 2, opAssoc.LEFT, create_binary_op_node),
         (add_sub, 2, opAssoc.LEFT, create_binary_op_node),
         (comparison, 2, opAssoc.LEFT, create_binary_op_node),

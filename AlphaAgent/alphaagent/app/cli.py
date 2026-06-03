@@ -17,6 +17,7 @@ from importlib.resources import path as rpath
 
 import fire
 from alphaagent.app.qlib_rd_loop.factor_mining import main as mine
+from alphaagent.app.qlib_rd_loop.factor_elite_mining import main as elite_mine
 from alphaagent.app.qlib_rd_loop.factor_backtest import main as backtest
 from alphaagent.app.utils.health_check import health_check
 from alphaagent.app.utils.info import collect_info
@@ -41,6 +42,7 @@ def app():
     fire.Fire(
         {
             "mine": mine,
+            "elite_mine": elite_mine,
             "backtest": backtest,
             "ui": ui,
             "health_check": health_check,

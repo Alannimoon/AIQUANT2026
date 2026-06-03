@@ -485,6 +485,6 @@ class BacktestHypothesis2FactorExpression(FactorHypothesis2Experiment):
             return exp
             
         else:
-            raise ValueError(f"File {self.factor_csv_path} does not exist. ")
+            raise ValueError(f"File {self.factor_path} does not exist. ")
         
     

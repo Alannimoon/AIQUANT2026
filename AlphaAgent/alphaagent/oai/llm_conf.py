@@ -7,6 +7,7 @@ from alphaagent.core.conf import ExtendedBaseSettings
 
 class LLMSettings(ExtendedBaseSettings):
     log_llm_chat_content: bool = True
+    llm_log_preview_chars: int = 0
 
     use_azure: bool = False
     chat_use_azure_token_provider: bool = False

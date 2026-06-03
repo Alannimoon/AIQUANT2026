@@ -21,8 +21,11 @@ def main(path=None, step_n=None, factor_path=None):
 
     """
     if path is None:
+        # starting a new session, create a new BacktestLoop instance
+        # factor_path is used for the first loop
         model_loop = BacktestLoop(FACTOR_BACK_TEST_PROP_SETTING, factor_path=factor_path)
     else:
+        # continuing a previous session, recover from "path"
         model_loop = BacktestLoop.load(path)
     model_loop.run(step_n=step_n)
 

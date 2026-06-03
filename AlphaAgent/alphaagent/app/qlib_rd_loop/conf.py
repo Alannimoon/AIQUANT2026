@@ -1,5 +1,6 @@
 from alphaagent.components.workflow.conf import BasePropSetting
 from alphaagent.core.conf import ExtendedSettingsConfigDict
+from alphaagent.scenarios.qlib.archive import DEFAULT_COMPLEXITY_METRIC
 
 
 class ModelBasePropSetting(BasePropSetting):
@@ -80,6 +81,42 @@ class AlphaAgentFactorBasePropSetting(BasePropSetting):
     evolving_n: int = 5
     """Number of evolutions"""
 
+
+class EliteAlphaFactorBasePropSetting(BasePropSetting):
+    model_config = ExtendedSettingsConfigDict(env_prefix="QLIB_FACTOR_", protected_namespaces=())
+
+    scen: str = "alphaagent.scenarios.qlib.experiment.factor_experiment.QlibEliteAlphaScenario"
+    """Scenario class for Qlib Elite Alpha Factor"""
+
+    # with archive
+    trace: str = "alphaagent.scenarios.qlib.archive.EliteAlphaTrace"
+    """Trace class with MAP-Elites archive"""
+
+    archive_complexity_metric: str = DEFAULT_COMPLEXITY_METRIC
+    """MAP-Elites second descriptor metric: "depth" or "vertex"."""
+
+    archive_vertex_count_thresholds: tuple[int, ...] | None = None
+    """Optional vertex-count thresholds for five bins; only used when archive_complexity_metric is "vertex"."""
+
+    hypothesis_gen: str = "alphaagent.scenarios.qlib.proposal.elitealpha_proposal.EliteAlphaHypothesisGen"
+    """Hypothesis generation class"""
+
+    hypothesis2experiment: str = "alphaagent.scenarios.qlib.proposal.elitealpha_proposal.EliteAlphaHypothesis2FactorExpression"
+    """Hypothesis to experiment class"""
+
+    coder: str = "alphaagent.scenarios.qlib.developer.factor_coder.QlibFactorParser"
+    """Coder class"""
+
+    runner: str = "alphaagent.scenarios.qlib.developer.factor_runner.QlibFactorRunner"
+    """Runner class"""
+
+    summarizer: str = "alphaagent.scenarios.qlib.developer.feedback.EliteAlphaQlibFactorHypothesisExperiment2Feedback"
+    """Summarizer class"""
+
+    evolving_n: int = 5
+    """Number of evolutions"""
+
+
 class FactorBackTestBasePropSetting(BasePropSetting):
     model_config = ExtendedSettingsConfigDict(env_prefix="QLIB_FACTOR_", protected_namespaces=())
 
@@ -126,4 +163,5 @@ FACTOR_PROP_SETTING = FactorBasePropSetting()
 FACTOR_FROM_REPORT_PROP_SETTING = FactorFromReportPropSetting()
 MODEL_PROP_SETTING = ModelBasePropSetting()
 ALPHA_AGENT_FACTOR_PROP_SETTING = AlphaAgentFactorBasePropSetting()
+ELITE_ALPHA_FACTOR_PROP_SETTING = EliteAlphaFactorBasePropSetting()
 FACTOR_BACK_TEST_PROP_SETTING = FactorBackTestBasePropSetting()

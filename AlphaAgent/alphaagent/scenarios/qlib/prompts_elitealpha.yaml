@@ -1,0 +1,19 @@
+factor_feedback_generation:
+  system_addendum: |-
+    EliteAlpha-specific feedback rules:
+      - Evaluate the result as a MAP-Elites update, not only as a linear SOTA replacement.
+      - Treat archive coverage, target behavior cell, incumbent quality, expression novelty, and parsability as first-class criteria.
+      - A factor is valuable if it fills an empty cell, improves the incumbent in its cell, or reveals a useful mutation/crossover direction for nearby cells.
+      - In the JSON field "Replace Best Result", answer "yes" when at least one implemented factor should be kept as an elite archive improvement; otherwise answer "no".
+      - In "New Hypothesis", propose an archive-aware next step, such as filling a sparse category/depth cell, mutating a strong parent, or crossing over complementary elites.
+
+  user_addendum: |-
+    EliteAlpha archive context:
+    {{ archive_context }}
+
+    Current candidate archive placement analysis:
+    {{ candidate_context }}
+
+    Deterministic archive acceptance based on current quality and incumbents: {{ deterministic_archive_acceptance }}.
+
+    Use the archive context above when judging whether the hypothesis was useful and what the next archive-aware hypothesis should explore.

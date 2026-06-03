@@ -623,13 +623,22 @@ class APIBackend:
     def _build_log_messages(self, messages: list[dict]) -> str:
         log_messages = ""
         for m in messages:
+            content = self._preview_llm_log_content(m["content"])
             log_messages += (
                 f"\n{LogColors.MAGENTA}{LogColors.BOLD}Role:{LogColors.END}"
                 f"{LogColors.CYAN}{m['role']}{LogColors.END}\n"
                 f"{LogColors.MAGENTA}{LogColors.BOLD}Content:{LogColors.END} "
-                f"{LogColors.CYAN}{m['content']}{LogColors.END}\n"
+                f"{LogColors.CYAN}{content}{LogColors.END}\n"
             )
         return log_messages
+
+    def _preview_llm_log_content(self, content: Any) -> str:
+        content = str(content)
+        preview_chars = LLM_SETTINGS.llm_log_preview_chars
+        if preview_chars <= 0 or len(content) <= preview_chars:
+            return content
+        omitted = len(content) - preview_chars
+        return f"{content[:preview_chars]}\n... [truncated {omitted} chars in log only]"
 
     def _create_chat_completion_inner_function(  # noqa: C901, PLR0912, PLR0915
         self,
@@ -666,7 +675,10 @@ class APIBackend:
             cache_result = self.cache.chat_get(input_content_json)
             if cache_result is not None:
                 if LLM_SETTINGS.log_llm_chat_content:
-                    logger.info(f"{LogColors.CYAN}Response:{cache_result}{LogColors.END}", tag="llm_messages")
+                    logger.info(
+                        f"{LogColors.CYAN}Response:{self._preview_llm_log_content(cache_result)}{LogColors.END}",
+                        tag="llm_messages",
+                    )
                 return cache_result, None
 
         if temperature is None:
@@ -701,7 +713,10 @@ class APIBackend:
             )
             resp = response[0]["generation"]["content"]
             if LLM_SETTINGS.log_llm_chat_content:
-                logger.info(f"{LogColors.CYAN}Response:{resp}{LogColors.END}", tag="llm_messages")
+                logger.info(
+                    f"{LogColors.CYAN}Response:{self._preview_llm_log_content(resp)}{LogColors.END}",
+                    tag="llm_messages",
+                )
         elif self.use_gcr_endpoint:
             body = str.encode(
                 json.dumps(
@@ -722,7 +737,10 @@ class APIBackend:
             response = urllib.request.urlopen(req)  # noqa: S310
             resp = json.loads(response.read().decode())["output"]
             if LLM_SETTINGS.log_llm_chat_content:
-                logger.info(f"{LogColors.CYAN}Response:{resp}{LogColors.END}", tag="llm_messages")
+                logger.info(
+                    f"{LogColors.CYAN}Response:{self._preview_llm_log_content(resp)}{LogColors.END}",
+                    tag="llm_messages",
+                )
         else:
             kwargs = dict(
                 model=model,
@@ -770,7 +788,10 @@ class APIBackend:
                 resp = response.choices[0].message.content
                 finish_reason = response.choices[0].finish_reason
                 if LLM_SETTINGS.log_llm_chat_content:
-                    logger.info(f"{LogColors.CYAN}Response:{resp}{LogColors.END}", tag="llm_messages")
+                    logger.info(
+                        f"{LogColors.CYAN}Response:{self._preview_llm_log_content(resp)}{LogColors.END}",
+                        tag="llm_messages",
+                    )
                     logger.info(
                         json.dumps(
                             {

@@ -21,7 +21,10 @@ dist/
 *.env
 AlphaAgent/.env
 
+/git_ignore_folder/
+
 # AlphaAgent runtime caches (large, machine-specific)
+/log/
 AlphaAgent/git_ignore_folder/
 AlphaAgent/pickle_cache/
 AlphaAgent/log/
@@ -34,6 +37,7 @@ AlphaAgent/alphaagent/scenarios/qlib/experiment/factor_data_template/*.h5
 # Microsoft Qlib clone (reproducible; see scripts/README.md)
 # Anchored with leading / so it doesn't match AlphaAgent/alphaagent/scenarios/qlib/
 /qlib/
+AlphaAgent/qlib/
 
 # Jupyter
 .ipynb_checkpoints/

@@ -1,0 +1,38 @@
+qlib_elitealpha_background: |-
+  EliteAlpha extends this Qlib factor mining scenario with a MAP-Elites quality-diversity search.
+  The goal is not only to improve the latest best factor, but also to build a diverse archive of strong factors across behavior cells.
+  Each behavior cell is defined by:
+  1. Factor category: momentum, reversal, volatility, volume-price, or cross-sectional.
+  2. AST depth bin: the structural complexity bucket of the factor expression.
+  Every proposed factor should be designed for the current search plan: initialize an empty cell, mutate a parent elite, or crossover two parent elites.
+  Prefer factors that are novel relative to the archive, interpretable, parsable by the expression grammar, and likely to improve quality inside the targeted cell.
+  Do not copy parent expressions directly. Preserve useful economic intuition while changing the expression structure enough to expand archive diversity.
+
+qlib_elitealpha_strategy: |-
+  Use the archive context as part of the research objective.
+  When the target cell is empty, prioritize a clean and testable factor that fills the requested category and complexity bucket.
+  When mutating an elite, retain the broad behavioral idea but vary windows, transformations, normalizations, and variable interactions.
+  When crossing over elites, combine complementary ideas without directly embedding either parent expression.
+  Balance quality and diversity: a slightly different expression that occupies or improves a weak cell can be more valuable than another near-duplicate of the current best factor.
+
+qlib_elitealpha_rich_style_description: |-
+  ### EliteAlpha-Qlib: MAP-Elites Factor Mining Demo
+
+  #### Overview
+
+  This demo runs automated factor discovery with a MAP-Elites archive. The loop proposes hypotheses, constructs factor expressions, backtests them in Qlib, and stores the best factor found for each behavior cell.
+
+  #### Automated R&D
+
+  - Research: Generate archive-aware hypotheses for initialization, mutation, and crossover.
+  - Development: Convert hypotheses into parsable factor expressions and evaluate them through Qlib.
+  - Archive Update: Place each evaluated factor into a category and AST-depth cell, replacing the incumbent only when quality improves.
+
+  #### Objective
+
+  Build a broad, high-quality factor library instead of optimizing a single linear best result.
+
+qlib_elitealpha_experiment_setting: |-
+  | Dataset | Model | Search | Archive Cells | Data Split |
+  |---------|-------|--------|---------------|------------|
+  | CSI300 | LGBModel | MAP-Elites factor mining | 5 categories x 5 AST-depth bins | Train: 2012-01-01 to 2018-12-31 <br> Valid: 2019-01-01 to 2020-12-31 <br> Test: 2021-01-01 to 2024-12-01 |
