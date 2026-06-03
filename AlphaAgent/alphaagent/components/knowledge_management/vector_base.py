@@ -45,8 +45,7 @@ class KnowledgeMetaData:
 
         """
         if self.embedding is None:
-            import numpy as np
-            self.embedding = np.zeros(256).tolist()  # dummy embedding, DeepSeek has no embedding API
+            self.embedding = APIBackend().create_embedding(input_content=self.content)
 
     def from_dict(self, data: dict):
         for key, value in data.items():

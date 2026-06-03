@@ -70,7 +70,13 @@ class AlphaAgentLoop(LoopBase, metaclass=LoopMeta):
             logger.log_object(self.factor_constructor, tag="experiment generation")
 
             ### 加入代码执行中的 Variables / Functions
-            self.coder: Developer = import_class(PROP_SETTING.coder)(scen)
+            # DeepSeek has no /v1/embeddings. Disabling knowledge_self_gen keeps the
+            # knowledge base empty, so the RAG `query()` path early-returns from
+            # calculate_embedding_distance_between_str_list (empty target list ->
+            # no API call). Leaves `with_knowledge=True` default so downstream
+            # evolving_strategy.evolve() still receives a real (empty) queried_knowledge
+            # object instead of None.
+            self.coder: Developer = import_class(PROP_SETTING.coder)(scen, knowledge_self_gen=False)
             logger.log_object(self.coder, tag="coder")
             
             self.runner: Developer = import_class(PROP_SETTING.runner)(scen)

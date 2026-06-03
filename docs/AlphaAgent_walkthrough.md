@@ -216,30 +216,42 @@ print(pd.DataFrame(rows).to_string(index=False))
 
 ## 7. 我们为了跑通做的 7 个 patch（本地适配）
 
-upstream 用 OpenAI + 自己 dump 的 CN 数据。我们用 DeepSeek + 旧 CN 数据（缺 SH000905 索引）。Partner（Ruili）此前已修过 6 个文件，我们沿用并新加 1 个：
+upstream 用 OpenAI + 自己 dump 的 CN 数据。我们用 DeepSeek + chenditc 数据。共 7 个文件改动：
 
 | 文件 | 改了什么 | 为什么 |
 |---|---|---|
-| `vector_base.py` | `create_embedding()` 返回 `np.zeros(256)` | DeepSeek 没有 `/v1/embeddings` 端点 |
-| `graph.py` | `batch_embedding()` 返回 dummy | 同上 |
-| `llm_utils.py` | `calculate_embedding_distance_*` 返回 uniform 0.0 | 同上 |
-| `alphaagent_loop.py` | `load()` 时重置 `STOP_EVENT` 全局 | 防止重载会话时残留信号 |
+| `alphaagent_loop.py:73` | `coder = CoSTEER(scen, knowledge_self_gen=False)` | DeepSeek 没 embedding，关掉 `generate_knowledge` 让 KB 保持空，下游 RAG `query()` 的 `calculate_embedding_distance` 因空 target list 直接 early-return，不调 API |
+| `alphaagent_loop.py:load()` | 重置 `STOP_EVENT` 全局 | 防止重载会话时残留信号 |
 | `feedback.py` | Series→DataFrame 修复 + 过滤只筛真实返回的 metric | Qlib 缺指标时不崩 |
 | `workspace.py` | 读 `ret.pkl` 前 exists 检查 | 防御性 |
-| `conf.yaml` + `conf_cn_combined_kdd_ver.yaml` | 之前**注释掉 PortAnaRecord**，**现在恢复** | 之前 SH000905 缺失会崩。我们把 SH000905 数据补进 qlib data 后恢复了 |
+| `conf.yaml` + `conf_cn_combined_kdd_ver.yaml` | 启用 PortAnaRecord | 出 AR/IR/MDD 指标 |
+| `pyproject.toml` | `setuptools_scm.fallback_version = "0.1.dev485"` | subtree fork 后没自己的 git tag，避免 fresh clone install 失败 |
+| `.gitignore` | `log/` → `/log/`，注释掉 `factor_template/*` 通配 | 防止误伤 alphaagent 自带的 `log/` Python 包 + 让我们的 yaml patch 入库 |
 
-> 副作用：embedding 关了之后 RAG 知识检索失效，AlphaAgent 跨 loop 的"知识库"机制实际是 no-op。但单 loop 流程不受影响。
+> 早期版本曾经 stub 了 3 个 embedding 文件（`vector_base.py`, `graph.py`, `llm_utils.py`），后来发现框架自带 `knowledge_self_gen` 开关，1 行参数代替 3 个 monkey patch，更优雅，将来如果换成支持 embedding 的 LLM 直接把这行删了 RAG 就自动打开。详见 commit `c876c86`。
 
 ---
 
-## 8. 我们做的关键修复
+## 8. 数据源
 
-### SH000905 数据补全
-旧 qlib data 缺 CSI 500 基准指数。流程：
-1. `fetch_sh000905_ak.py` 用 akshare Sina 端点拉 5194 行（2005-2026）
-2. 存为 `~/.qlib/qlib_data/cn_data/raw_data_back_adjust/sh000905.csv`
-3. 用 `qlib/scripts/dump_bin.py dump_update` 写入 qlib binary
-4. 验证 qlib 能读
+**当前用**: [chenditc/investment_data](https://github.com/chenditc/investment_data) 的 daily release tarball。
+
+获取方式（README §3 也有）:
+```bash
+LATEST_TAG=$(curl -sL https://api.github.com/repos/chenditc/investment_data/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
+wget -O /tmp/qlib_bin.tar.gz https://github.com/chenditc/investment_data/releases/download/${LATEST_TAG}/qlib_bin.tar.gz
+mkdir -p ~/.qlib/qlib_data/cn_data
+tar -zxf /tmp/qlib_bin.tar.gz -C ~/.qlib/qlib_data/cn_data --strip-components=1
+```
+
+特点：
+- 时间跨度 2000-01 ~ 当天（旧来源 2014-12 起）
+- 6102 个 instruments（含退市票）
+- **CSI500 是真的 universe + 历史成员资格**（1774 个独立代码 × 22000 个时间窗口）—— 旧来源的 csi500.txt 含 3238 个代码实际等于全市场，不可信
+- 自带 SH000905 / SH000300 / SH000852 等 benchmark 指数
+- 字段：open / high / low / close / volume / amount / factor / **adjclose** / **vwap** / **change**（比旧来源多 3 个 alpha-mining 友好字段）
+
+> 旧来源（不明来路的 baostock dump）已备份在 `~/.qlib/qlib_data/cn_data.OLD_2026-05-30/`，2 周后无问题可删。`scripts/fetch_sh000905*.py` 是当初我们手补 SH000905 的脚本，**chenditc 自带了，这两个脚本已弃用**仅作历史参考。
 
 ---
 

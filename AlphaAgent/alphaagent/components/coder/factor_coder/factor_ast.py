@@ -479,10 +479,55 @@ def count_nodes(node: Node) -> int:
     elif isinstance(node, BinaryOpNode):
         return 1 + count_nodes(node.left) + count_nodes(node.right)
     elif isinstance(node, ConditionalNode):
-        return 1 + (count_nodes(node.condition) + 
-                    count_nodes(node.true_expr) + 
+        return 1 + (count_nodes(node.condition) +
+                    count_nodes(node.true_expr) +
                     count_nodes(node.false_expr))
     return 0
+
+
+# ---------------------------------------------------------------------------
+# AST depth (used by FactorRegulator depth cap and by scripts/ast_depth.py)
+# ---------------------------------------------------------------------------
+def _depth_node(node: Node) -> int:
+    """Walk an AST and return its depth. Leaves count as 1, every nesting
+    layer adds 1. Mirrors the convention of the ELITEALPHA proposal §3.2."""
+    if isinstance(node, (VarNode, NumberNode)):
+        return 1
+    if isinstance(node, FunctionNode):
+        return 1 + max((_depth_node(a) for a in node.args), default=0)
+    if isinstance(node, BinaryOpNode):
+        return 1 + max(_depth_node(node.left), _depth_node(node.right))
+    if isinstance(node, ConditionalNode):
+        return 1 + max(_depth_node(node.condition),
+                       _depth_node(node.true_expr),
+                       _depth_node(node.false_expr))
+    return 1
+
+
+def _naive_paren_depth(expr: str) -> int:
+    """Coarse depth from parenthesis nesting. Used as a fallback when the
+    pyparsing grammar bails on operators it doesn't recognize (e.g. when an
+    LLM invents `GROUP_MEAN` or `MAX(0, ...)`)."""
+    max_d = cur = 0
+    for c in expr:
+        if c == "(":
+            cur += 1
+            if cur > max_d:
+                max_d = cur
+        elif c == ")":
+            cur -= 1
+    return max_d + 1
+
+
+def count_depth(expr: str) -> int:
+    """Canonical AST-depth measure for a factor expression string. Tries the
+    formal AST first and falls back to paren nesting so this function always
+    returns a number — important for FactorRegulator, which calls this on
+    every LLM-generated expression including the malformed ones."""
+    try:
+        return _depth_node(parse_expression(expr))
+    except Exception:
+        return _naive_paren_depth(expr)
 
 
 # Example usage:

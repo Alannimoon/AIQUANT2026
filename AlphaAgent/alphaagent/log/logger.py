@@ -1,7 +1,7 @@
 import os
 import sys
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import partial
 from logging import LogRecord
 from multiprocessing import Pipe
@@ -57,7 +57,7 @@ class AgentLog(SingletonBaseClass):
 
     def __init__(self, log_trace_path: Union[str, None] = RD_AGENT_SETTINGS.log_trace_path) -> None:
         if log_trace_path is None:
-            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M-%S-%f")
+            timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S-%f")
             self.log_trace_path = Path.cwd() / "log" / timestamp
         else:
             self.log_trace_path = Path(log_trace_path)

@@ -7,12 +7,14 @@ loguru
 fire
 fuzzywuzzy
 openai
+rich         # used by alphaagent.utils.env; upstream forgot to list it
+pyqlib       # Qlib backtest engine; upstream README tells users to clone+install manually
 
 scikit-learn==1.6.1
 xgboost==3.0.0
 catboost==1.2.8
 
-numpy==1.23.5 # we use numpy as default data format. So we have to install numpy
+numpy>=1.24,<2 # relaxed from upstream's `==1.23.5` to satisfy qlib/seaborn/skops which require >=1.24/>=1.25; kept below 2.0 to avoid the 2.0 ABI break
 pandas==1.5.3 # we use pandas as default data format. So we have to install pandas
 pandarallel # parallelize pandas
 matplotlib

@@ -22,10 +22,21 @@ DIRNAME = Path(__file__).absolute().resolve().parent
 
 
 def process_results(current_result, sota_result):
-    # Convert results to aligned Series. The first AlphaAgent round has no
-    # accepted SOTA yet, so sota_result can be None.
-    current_df = _result_to_series(current_result).to_frame("Current Result")
-    sota_df = _result_to_series(sota_result).to_frame("SOTA Result")
+    # Convert Series to DataFrame with named columns. On the very first loop
+    # `sota_result` can come through as a scalar (no prior SOTA yet) which the
+    # dict-of-scalar form of pd.DataFrame rejects; in that case, build an empty
+    # SOTA column indexed by the current metrics so the downstream `concat`
+    # still works.
+    current_df = pd.DataFrame({"Current Result": current_result})
+    if hasattr(sota_result, "index"):
+        sota_df = pd.DataFrame({"SOTA Result": sota_result})
+    else:
+        # First loop: no SOTA yet. Fill with -inf so the downstream lambda
+        # `Current > SOTA` always picks Current (we have no benchmark to beat).
+        sota_df = pd.DataFrame(
+            {"SOTA Result": [float("-inf")] * len(current_df)},
+            index=current_df.index,
+        )
 
     current_df.index.name = "metric"
     sota_df.index.name = "metric"
