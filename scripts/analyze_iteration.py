@@ -67,7 +67,7 @@ def median(xs: list[int]) -> int | None:
     return s[len(s) // 2]
 
 
-def analyze_one(log_path: Path) -> None:
+def analyze_one(log_path: Path, dump: bool = False, max_len: int = 110) -> None:
     loops = per_loop(log_path)
     if not loops:
         print(f"  (no factor_expression lines found)")
@@ -79,10 +79,12 @@ def analyze_one(log_path: Path) -> None:
         f"{'total':>6} {'unique':>7} {'novel':>6} {'novel%':>7} "
         f"{'d_med':>6} {'d_max':>6}  cat_top1"
     )
+    loop_unique: dict[int, list[str]] = {}
     for loop_idx in sorted(loops):
         exprs = loops[loop_idx]
-        unique = set(exprs)
-        novel = unique - seen
+        unique = list(dict.fromkeys(exprs))  # preserve insertion order, dedupe
+        unique_set = set(unique)
+        novel = unique_set - seen
         depths = []
         cats: Counter[str] = Counter()
         for e in unique:
@@ -91,7 +93,7 @@ def analyze_one(log_path: Path) -> None:
             except Exception:
                 pass
             cats[classify(e)] += 1
-        seen |= unique
+        seen |= unique_set
 
         novel_ratio = (len(novel) / len(unique)) if unique else 0.0
         top_cat = cats.most_common(1)[0][0] if cats else "-"
@@ -104,17 +106,48 @@ def analyze_one(log_path: Path) -> None:
             f"{d_med if d_med is not None else '-':>6} "
             f"{d_max if d_max is not None else '-':>6}  {top_cat}"
         )
+        loop_unique[loop_idx] = unique
+
+    if dump:
+        print()
+        for loop_idx in sorted(loop_unique):
+            print(f"  --- loop {loop_idx} unique expressions ---")
+            for e in loop_unique[loop_idx]:
+                try:
+                    d = factor_depth(e)
+                except Exception:
+                    d = "?"
+                c = classify(e)
+                shown = e if len(e) <= max_len else e[:max_len] + "..."
+                print(f"    [d={d}, {c}] {shown}")
+            print()
 
 
 def main() -> int:
-    phase = sys.argv[1] if len(sys.argv) > 1 else "A"
+    import argparse
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("phase", nargs="?", default="A",
+                   help="Phase tag (A or C). Default: A.")
+    p.add_argument("logs_dir", nargs="?", default=None,
+                   help="run_logs/ dir. Default: ~/AIQUANT2026/AlphaAgent/run_logs.")
+    p.add_argument("--dump", "-v", action="store_true",
+                   help="List every unique expression per loop, tagged with "
+                        "[depth, category].")
+    p.add_argument("--only", default=None,
+                   help="Only analyze this direction slug (e.g. momentum).")
+    p.add_argument("--max-len", type=int, default=110,
+                   help="Truncate expressions longer than N chars (default 110).")
+    args = p.parse_args()
+
     logs_dir = (
-        Path(sys.argv[2]) if len(sys.argv) > 2
+        Path(args.logs_dir) if args.logs_dir
         else Path.home() / "AIQUANT2026" / "AlphaAgent" / "run_logs"
     )
-
-    pattern = f"baseline_{phase}_*_*.log"
+    pattern = f"baseline_{args.phase}_*_*.log"
     log_files = sorted(logs_dir.glob(pattern))
+    if args.only:
+        log_files = [f for f in log_files if f.stem.endswith(args.only)]
     if not log_files:
         print(f"No logs matching {pattern} in {logs_dir}", file=sys.stderr)
         return 1
@@ -129,10 +162,10 @@ def main() -> int:
 
     log_files.sort(key=_order)
 
-    print(f"\n############ Phase {phase}: per-loop evolution ############\n")
+    print(f"\n############ Phase {args.phase}: per-loop evolution ############\n")
     for log in log_files:
         print(f"=== {log.stem} ===")
-        analyze_one(log)
+        analyze_one(log, dump=args.dump, max_len=args.max_len)
         print()
 
     return 0
