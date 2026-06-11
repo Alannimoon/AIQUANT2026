@@ -45,6 +45,7 @@ WINDOW_END = "2026-05-31"
 # Where to look for per-method pred.pkl files; missing entries are skipped.
 PRED_PATHS: dict[str, Path] = {
     "Alpha158":   REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/pred.pkl",
+    "LSTM":       REPO / "baselines/mlruns/209613909970893617/426253fc7bcc4d0cadee1dfec21ed92a/artifacts/pred.pkl",
     "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/f1332f69e40e48f1bdbb0f9df7620854/mlruns/284224144358219592/38c38f8df6fe49ca99ddd3c22fe0f7a1/artifacts/pred.pkl",
     # "EliteAlpha": REPO / "...",
 }
@@ -170,6 +171,7 @@ def evaluate_source(name: str, signal: pd.Series, label: pd.Series, auto_flip: b
 STYLE = {
     "RSI":        dict(color="#4daf4a", marker="s", linestyle="--", linewidth=1.4),
     "Alpha158":   dict(color="#377eb8", marker="o", linestyle="--", linewidth=1.4),
+    "LSTM":       dict(color="#984ea3", marker="v", linestyle="--", linewidth=1.4),
     "AlphaAgent": dict(color="#e41a1c", marker="^", linestyle="-",  linewidth=2.2),
     "EliteAlpha": dict(color="#000000", marker="D", linestyle="-",  linewidth=2.5),
 }
