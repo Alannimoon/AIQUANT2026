@@ -58,18 +58,6 @@ def main() -> None:
     ax.plot(rounds, ic, color="#e41a1c", linewidth=2.2, marker="o",
             markersize=8, label="AlphaAgent (ours, DeepSeek + CSI500)")
 
-    # Annotate each round with the factor formula's "core".
-    cores = [
-        "$\\Sigma$ return₅",
-        "$\\Sigma$ ret₅ / std₂₀",
-        "$\\Sigma$ ret₁₀ / std₂₀",
-        "$\\Sigma$ ret₁₀ / std₅",
-        "RANK($\\Sigma$ ret₁₀ / std₅)",
-    ]
-    for r, y, c in zip(rounds, ic, cores):
-        ax.annotate(c, xy=(r, y), xytext=(0, 12), textcoords="offset points",
-                    fontsize=8, ha="center", color="#555")
-
     # Optional ELITEALPHA line.
     if ELITEALPHA_OURS is not None:
         rr = ELITEALPHA_OURS["rounds"]
