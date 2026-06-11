@@ -1,13 +1,22 @@
-"""Figure 4 — Yearly IC and RankIC on CSI 500.
+"""Figure 4 — Yearly IC and RankIC by FACTOR SOURCE on CSI 500.
 
-For each method, takes the saved `pred.pkl` (Qlib's per-date, per-instrument
-prediction scores), fetches the matching next-day return label from the
-qlib data store, computes daily cross-sectional Pearson IC and Spearman
-Rank IC, then averages within each calendar year. The result is a grouped
-bar chart, one bar per (method, year).
+Following the AlphaAgent paper's Figure 4, this is a *factor source*
+comparison, NOT a *model* comparison. Each line is a different way of
+producing the per-(date, instrument) predictive signal:
 
-This is the alpha-decay-over-time figure: weaker methods show a clear IC
-drop after ~2024; AlphaAgent / EliteAlpha should stay flat-ish.
+  - RSI(14)        : pure handcrafted formula, no training
+  - Alpha158       : 158 handcrafted features fed through LightGBM
+  - AlphaAgent     : best LLM-discovered factor (single expression)
+  - EliteAlpha     : best MAP-Elites-mined factor (single expression)
+
+The figure shows two panels — yearly mean IC and yearly mean RankIC —
+each as a line plot across years. Strong sources keep their IC stable;
+weaker ones decay or flip sign (factor crowding).
+
+Each source returns the per-day cross-sectional signal as a Series with
+MultiIndex (datetime, instrument). We auto-flip the sign if a source's
+overall RankIC is negative (this is what the paper does for RSI: it's a
+reversal signal in A-shares, so we report |RankIC|).
 
 Usage:
     python scripts/plot_figure4.py
@@ -15,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 import warnings
 
 import numpy as np
@@ -27,11 +37,14 @@ REPO = Path(__file__).resolve().parent.parent
 FIG_DIR = REPO / "figures"
 FIG_DIR.mkdir(exist_ok=True)
 
-# 每个方法的 pred.pkl 位置。和 figure3 同样会随 baseline 完成而增长。
-METHOD_PREDS: dict[str, Path] = {
-    "LightGBM": REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/pred.pkl",
-    # "LSTM":       REPO / "baselines/mlruns/.../pred.pkl",
-    # "Transformer":REPO / "baselines/mlruns/.../pred.pkl",
+# Reporting window. Our team docs fix the start at 2021-06; the warmup
+# is handled inside each signal producer.
+WINDOW_START = "2021-06-01"
+WINDOW_END = "2026-05-31"
+
+# Where to look for per-method pred.pkl files; missing entries are skipped.
+PRED_PATHS: dict[str, Path] = {
+    "Alpha158":   REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/pred.pkl",
     # "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/.../pred.pkl",
     # "EliteAlpha": REPO / "...",
 }
@@ -42,7 +55,6 @@ def _normalize_index(s: pd.Series) -> pd.Series:
     if not isinstance(s.index, pd.MultiIndex):
         return s
     names = list(s.index.names)
-    # 1. Make sure both levels are named.
     if "datetime" in names and "instrument" in names:
         if names[0] != "datetime":
             s = s.swaplevel(0, 1)
@@ -53,32 +65,69 @@ def _normalize_index(s: pd.Series) -> pd.Series:
         if s.index.names[0] != "datetime":
             s = s.swaplevel(0, 1)
     else:
-        # Best effort: assume first level is date-like.
         s.index = s.index.set_names(["datetime", "instrument"])
     return s.sort_index()
 
 
-def load_labels(start: str, end: str) -> pd.Series:
-    """Pull the 1-day forward close-to-close return from Qlib.
+# ── label loader ─────────────────────────────────────────────────────────────
+_LABEL_CACHE: pd.Series | None = None
 
-    Matches Qlib's default LABEL0 = Ref($close, -2)/Ref($close, -1) - 1.
-    Returns a (datetime, instrument) -> float series."""
+
+def load_labels() -> pd.Series:
+    """Pull 1-day forward close-to-close return from Qlib (cached)."""
+    global _LABEL_CACHE
+    if _LABEL_CACHE is not None:
+        return _LABEL_CACHE
     import qlib
     from qlib.data import D
-
     qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region="cn")
-    end_buf = (pd.Timestamp(end) + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
+    end_buf = (pd.Timestamp(WINDOW_END) + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
     df = D.features(
         D.instruments("csi500"),
         ["Ref($close, -2)/Ref($close, -1) - 1"],
-        start_time=start, end_time=end_buf, freq="day",
+        start_time=WINDOW_START, end_time=end_buf, freq="day",
     )
     df.columns = ["label"]
-    return _normalize_index(df["label"])
+    _LABEL_CACHE = _normalize_index(df["label"])
+    return _LABEL_CACHE
 
 
+# ── signal producers ────────────────────────────────────────────────────────
+def signal_rsi(window: int = 14) -> pd.Series:
+    """RSI(close, 14) for every (datetime, instrument) in CSI500."""
+    import qlib
+    from qlib.data import D
+    qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region="cn")
+    # Pull from a bit earlier so the 14-day warmup is filled.
+    warmup_start = (pd.Timestamp(WINDOW_START) - pd.Timedelta(days=40)).strftime("%Y-%m-%d")
+    raw = D.features(
+        D.instruments("csi500"), ["$close"],
+        start_time=warmup_start, end_time=WINDOW_END, freq="day",
+    )
+    raw.columns = ["close"]
+    raw = _normalize_index(raw["close"])
+    wide = raw.unstack("instrument")
+    delta = wide.diff()
+    gain = delta.clip(lower=0)
+    loss = (-delta).clip(lower=0)
+    avg_gain = gain.rolling(window, min_periods=window).mean()
+    avg_loss = loss.rolling(window, min_periods=window).mean()
+    rs = avg_gain / (avg_loss + 1e-8)
+    rsi = 100 - 100 / (1 + rs)
+    s = rsi.stack(dropna=True)
+    s.index = s.index.set_names(["datetime", "instrument"])
+    return s.loc[s.index.get_level_values(0) >= pd.Timestamp(WINDOW_START)]
+
+
+def signal_from_pred(pkl_path: Path) -> pd.Series:
+    pred = pd.read_pickle(pkl_path)
+    if isinstance(pred, pd.DataFrame):
+        pred = pred.iloc[:, 0]
+    return _normalize_index(pred)
+
+
+# ── IC computation ──────────────────────────────────────────────────────────
 def per_day_ic(pred: pd.Series, label: pd.Series) -> pd.DataFrame:
-    """Cross-sectional IC (Pearson) and RankIC (Spearman) per day."""
     pred = _normalize_index(pred)
     label = _normalize_index(label)
     df = pd.concat([pred.rename("pred"), label.rename("label")], axis=1).dropna()
@@ -94,73 +143,87 @@ def per_day_ic(pred: pd.Series, label: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(out, columns=["datetime", "IC", "RankIC"]).set_index("datetime")
 
 
-def yearly_ic(pred_path: Path, label: pd.Series) -> pd.DataFrame:
-    pred = pd.read_pickle(pred_path)
-    if isinstance(pred, pd.DataFrame):
-        pred = pred.iloc[:, 0]
-    daily = per_day_ic(pred, label)
-    if daily.empty:
-        return pd.DataFrame()
+def yearly_ic(daily: pd.DataFrame) -> pd.DataFrame:
+    daily = daily.copy()
     daily["year"] = pd.to_datetime(daily.index).year
     return daily.groupby("year")[["IC", "RankIC"]].mean()
 
 
+def evaluate_source(name: str, signal: pd.Series, label: pd.Series, auto_flip: bool = True):
+    """Compute yearly IC/RankIC; optionally flip sign if overall RankIC < 0."""
+    daily = per_day_ic(signal, label)
+    if daily.empty:
+        print(f"[skip] {name}: empty after join")
+        return None
+    flipped = False
+    if auto_flip and daily["RankIC"].mean() < 0:
+        daily["IC"] = -daily["IC"]
+        daily["RankIC"] = -daily["RankIC"]
+        flipped = True
+    yr = yearly_ic(daily)
+    tag = " (sign-flipped)" if flipped else ""
+    print(f"[ok]   {name}{tag}: overall IC={daily['IC'].mean():.4f}, RankIC={daily['RankIC'].mean():.4f}")
+    return yr
+
+
+# ── plot ────────────────────────────────────────────────────────────────────
+STYLE = {
+    "RSI":        dict(color="#4daf4a", marker="s", linestyle="--", linewidth=1.4),
+    "Alpha158":   dict(color="#377eb8", marker="o", linestyle="--", linewidth=1.4),
+    "AlphaAgent": dict(color="#e41a1c", marker="^", linestyle="-",  linewidth=2.2),
+    "EliteAlpha": dict(color="#000000", marker="D", linestyle="-",  linewidth=2.5),
+}
+
+
 def main() -> None:
-    if not METHOD_PREDS:
-        print("No method preds configured.")
-        return
-
-    # 读 label 一次（所有方法共用同 universe）。
-    # 取最宽时间窗以覆盖所有方法的预测期。
     print("loading qlib labels...")
-    label = load_labels("2021-01-01", "2026-05-31")
+    label = load_labels()
 
-    by_method: dict[str, pd.DataFrame] = {}
-    for name, pkl in METHOD_PREDS.items():
+    # Collect (source name -> yearly DataFrame).
+    results: dict[str, pd.DataFrame] = {}
+
+    # 1) RSI — always computed from $close.
+    print("computing RSI(14)...")
+    yr = evaluate_source("RSI", signal_rsi(14), label)
+    if yr is not None:
+        results["RSI"] = yr
+
+    # 2) pred.pkl-based sources.
+    for name, pkl in PRED_PATHS.items():
         if not pkl.exists():
             print(f"[skip] {name}: {pkl} not found")
             continue
-        print(f"[ok]   {name}")
-        by_method[name] = yearly_ic(pkl, label)
+        yr = evaluate_source(name, signal_from_pred(pkl), label, auto_flip=False)
+        if yr is not None:
+            results[name] = yr
 
-    if not by_method:
-        print("No methods could be plotted.")
+    if not results:
+        print("Nothing to plot.")
         return
 
-    # ── 拼成 long-form 表，行=year，列=(method, metric) ──
-    table = pd.concat(by_method, axis=1)
-    print("\n=== yearly IC table ===")
+    # ── print summary table ────────────────────────────────────────
+    table = pd.concat(results, axis=1)
+    print("\n=== yearly IC table (factor sources) ===")
     print(table.round(4))
 
-    # ── grouped bar chart: 上下两 panel 分 IC / RankIC ──
-    years = sorted({y for df in by_method.values() for y in df.index})
-    methods = list(by_method.keys())
-    n = len(methods)
-    width = 0.8 / max(n, 1)
+    # ── line plot, two panels ──────────────────────────────────────
+    years = sorted({y for df in results.values() for y in df.index})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 6.5), sharex=True)
+    for name, df in results.items():
+        st = STYLE.get(name, dict(linewidth=1.4, marker="o"))
+        ic_vals = [df.loc[y, "IC"] if y in df.index else np.nan for y in years]
+        ric_vals = [df.loc[y, "RankIC"] if y in df.index else np.nan for y in years]
+        ax1.plot(years, ic_vals, label=name, **st)
+        ax2.plot(years, ric_vals, label=name, **st)
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 6), sharex=True)
-    palette = ["#377eb8", "#4daf4a", "#984ea3", "#ff7f00",
-               "#a65628", "#f781bf", "#e41a1c", "#000000"]
-
-    for i, m in enumerate(methods):
-        offsets = (i - (n - 1) / 2) * width
-        df = by_method[m]
-        ic = [df.loc[y, "IC"] if y in df.index else np.nan for y in years]
-        ric = [df.loc[y, "RankIC"] if y in df.index else np.nan for y in years]
-        ax1.bar([y + offsets for y in years], ic, width, label=m, color=palette[i % len(palette)])
-        ax2.bar([y + offsets for y in years], ric, width, label=m, color=palette[i % len(palette)])
-
-    ax1.set_ylabel("IC")
-    ax1.set_title("Figure 4: Yearly IC and RankIC on CSI 500")
-    ax1.legend(loc="upper right", fontsize=8, frameon=True)
-    ax1.grid(axis="y", alpha=0.3)
-    ax1.axhline(0, color="gray", linewidth=0.6)
-
-    ax2.set_ylabel("RankIC")
+    for ax, ylabel in [(ax1, "Yearly IC"), (ax2, "Yearly RankIC")]:
+        ax.axhline(0, color="gray", linewidth=0.6, alpha=0.6)
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+    ax1.legend(loc="best", frameon=True, fontsize=9)
+    ax1.set_title("Figure 4: Yearly IC and RankIC by Factor Source on CSI 500 (2021-06 ~ 2026-05)")
     ax2.set_xlabel("Year")
     ax2.set_xticks(years)
-    ax2.grid(axis="y", alpha=0.3)
-    ax2.axhline(0, color="gray", linewidth=0.6)
 
     fig.tight_layout()
     out_pdf = FIG_DIR / "figure4_csi500.pdf"
