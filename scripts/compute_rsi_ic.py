@@ -22,9 +22,11 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 import qlib
 from qlib.data import D
 
-# CSI500 test window (matches Table 2's extended window).
-START = "2021-01-01"   # earlier than test so 14-day warmup is safe
+# Extended window: paper's Figure 4 shows 2020 onwards, so we start there.
+# RSI is a pure formula (no training), so including 2020 is not data leakage.
+START = "2019-10-01"   # earlier than 2020-01-01 for 14-day warmup
 END   = "2026-05-31"
+FILTER_FROM = "2020-01-01"
 
 
 def rsi_signal(close: pd.DataFrame, window: int = 14) -> pd.Series:
@@ -78,9 +80,9 @@ def main() -> None:
 
     label = raw["label"]
 
-    # Filter to test window (drop the warmup days).
-    rsi = rsi.loc[(rsi.index.get_level_values(0) >= "2021-06-01")]
-    label = label.loc[(label.index.get_level_values(0) >= "2021-06-01")]
+    # Filter to the reporting window (drop the warmup days).
+    rsi = rsi.loc[(rsi.index.get_level_values(0) >= FILTER_FROM)]
+    label = label.loc[(label.index.get_level_values(0) >= FILTER_FROM)]
 
     daily = per_day_ic(rsi, label)
     if daily.empty:
