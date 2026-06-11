@@ -43,9 +43,13 @@ WINDOW_START = "2021-06-01"
 WINDOW_END = "2026-05-31"
 
 # Where to look for per-method pred.pkl files; missing entries are skipped.
+# Figure 4 is a *factor-source* comparison (RSI formula / Alpha158 lib /
+# LLM-mined). LSTM and LightGBM both use Alpha158 as input — they're
+# different models on the same factor source. We follow the paper and use
+# LightGBM as the canonical Alpha158 readout (since that's what the paper's
+# Alpha158 line means). Model comparison lives in Figure 3 instead.
 PRED_PATHS: dict[str, Path] = {
     "Alpha158":   REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/pred.pkl",
-    "LSTM":       REPO / "baselines/mlruns/209613909970893617/426253fc7bcc4d0cadee1dfec21ed92a/artifacts/pred.pkl",
     "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/f1332f69e40e48f1bdbb0f9df7620854/mlruns/284224144358219592/38c38f8df6fe49ca99ddd3c22fe0f7a1/artifacts/pred.pkl",
     # "EliteAlpha": REPO / "...",
 }
