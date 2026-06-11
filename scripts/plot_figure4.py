@@ -37,6 +37,27 @@ METHOD_PREDS: dict[str, Path] = {
 }
 
 
+def _normalize_index(s: pd.Series) -> pd.Series:
+    """Force the MultiIndex to (datetime, instrument) in that order."""
+    if not isinstance(s.index, pd.MultiIndex):
+        return s
+    names = list(s.index.names)
+    # 1. Make sure both levels are named.
+    if "datetime" in names and "instrument" in names:
+        if names[0] != "datetime":
+            s = s.swaplevel(0, 1)
+    elif "date" in names and "instrument" in names:
+        s.index = s.index.set_names(
+            ["datetime" if n == "date" else n for n in names]
+        )
+        if s.index.names[0] != "datetime":
+            s = s.swaplevel(0, 1)
+    else:
+        # Best effort: assume first level is date-like.
+        s.index = s.index.set_names(["datetime", "instrument"])
+    return s.sort_index()
+
+
 def load_labels(start: str, end: str) -> pd.Series:
     """Pull the 1-day forward close-to-close return from Qlib.
 
@@ -46,7 +67,6 @@ def load_labels(start: str, end: str) -> pd.Series:
     from qlib.data import D
 
     qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region="cn")
-    # 多取 5 天 buffer 给 Ref(-2) 用。
     end_buf = (pd.Timestamp(end) + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
     df = D.features(
         D.instruments("csi500"),
@@ -54,14 +74,18 @@ def load_labels(start: str, end: str) -> pd.Series:
         start_time=start, end_time=end_buf, freq="day",
     )
     df.columns = ["label"]
-    return df["label"]
+    return _normalize_index(df["label"])
 
 
 def per_day_ic(pred: pd.Series, label: pd.Series) -> pd.DataFrame:
     """Cross-sectional IC (Pearson) and RankIC (Spearman) per day."""
+    pred = _normalize_index(pred)
+    label = _normalize_index(label)
     df = pd.concat([pred.rename("pred"), label.rename("label")], axis=1).dropna()
+    if df.empty:
+        return pd.DataFrame(columns=["IC", "RankIC"])
     out = []
-    for date, sub in df.groupby(level="datetime"):
+    for date, sub in df.groupby(level=0):
         if len(sub) < 5:
             continue
         ic = sub["pred"].corr(sub["label"], method="pearson")
@@ -72,12 +96,12 @@ def per_day_ic(pred: pd.Series, label: pd.Series) -> pd.DataFrame:
 
 def yearly_ic(pred_path: Path, label: pd.Series) -> pd.DataFrame:
     pred = pd.read_pickle(pred_path)
-    # pred 是 DataFrame，单列名叫 'score'。统一成 Series。
-    pred = pred.iloc[:, 0]
+    if isinstance(pred, pd.DataFrame):
+        pred = pred.iloc[:, 0]
     daily = per_day_ic(pred, label)
     if daily.empty:
         return pd.DataFrame()
-    daily["year"] = daily.index.get_level_values("datetime").year if isinstance(daily.index, pd.MultiIndex) else daily.index.year
+    daily["year"] = pd.to_datetime(daily.index).year
     return daily.groupby("year")[["IC", "RankIC"]].mean()
 
 
