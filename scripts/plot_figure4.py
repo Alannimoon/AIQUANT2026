@@ -45,7 +45,7 @@ WINDOW_END = "2026-05-31"
 # Where to look for per-method pred.pkl files; missing entries are skipped.
 PRED_PATHS: dict[str, Path] = {
     "Alpha158":   REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/pred.pkl",
-    # "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/.../pred.pkl",
+    "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/f1332f69e40e48f1bdbb0f9df7620854/mlruns/284224144358219592/38c38f8df6fe49ca99ddd3c22fe0f7a1/artifacts/pred.pkl",
     # "EliteAlpha": REPO / "...",
 }
 

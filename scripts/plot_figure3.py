@@ -28,7 +28,7 @@ METHOD_PKLS: dict[str, Path] = {
     "LightGBM":   REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/portfolio_analysis/report_normal_1day.pkl",
     # "LSTM":       REPO / "baselines/mlruns/.../report_normal_1day.pkl",
     # "Transformer":REPO / "baselines/mlruns/.../report_normal_1day.pkl",
-    # "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/.../report_normal_1day.pkl",
+    "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/f1332f69e40e48f1bdbb0f9df7620854/mlruns/284224144358219592/38c38f8df6fe49ca99ddd3c22fe0f7a1/artifacts/portfolio_analysis/report_normal_1day.pkl",
     # "EliteAlpha": REPO / "...",
 }
 
