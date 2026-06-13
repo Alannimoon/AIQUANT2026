@@ -10,13 +10,7 @@ data_handler_config: &data_handler_config
     fit_end_time: 2021-05-31
     instruments: *market
     infer_processors:
-        - class: FilterCol
-          kwargs:
-              fields_group: feature
-              col_list: ["RESI5", "WVMA5", "RSQR5", "KLEN", "RSQR10", "CORR5", "CORD5", "CORR10", 
-                            "ROC60", "RESI10", "VSTD5", "RSQR60", "CORR60", "WVMA60", "STD5", 
-                            "RSQR20", "CORD60", "CORD10", "CORR20", "KLOW"
-                        ]
+        # FilterCol removed: use the full Alpha158 set to match LightGBM baseline.
         - class: RobustZScoreNorm
           kwargs:
               fields_group: feature
@@ -55,7 +49,7 @@ task:
         class: LSTM
         module_path: qlib.contrib.model.pytorch_lstm_ts
         kwargs:
-            d_feat: 20
+            d_feat: 158
             hidden_size: 64
             num_layers: 2
             dropout: 0.0
