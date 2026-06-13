@@ -29,7 +29,7 @@ METHOD_PKLS: dict[str, Path] = {
     "LSTM":       REPO / "baselines/mlruns/209613909970893617/426253fc7bcc4d0cadee1dfec21ed92a/artifacts/portfolio_analysis/report_normal_1day.pkl",
     "Transformer":REPO / "baselines/mlruns/209613909970893617/ebafbf67d27c420cb706c44ded7f8a4d/artifacts/portfolio_analysis/report_normal_1day.pkl",
     "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/f1332f69e40e48f1bdbb0f9df7620854/mlruns/284224144358219592/38c38f8df6fe49ca99ddd3c22fe0f7a1/artifacts/portfolio_analysis/report_normal_1day.pkl",
-    # "EliteAlpha": REPO / "...",
+    "EliteAlpha": REPO / "baselines/direct_factor_backtests/elitealpha_sota_csi500_report_normal_1day.pkl",
 }
 
 # Color + linewidth per method (论文里 AlphaAgent / EliteAlpha 用粗实线突出).
