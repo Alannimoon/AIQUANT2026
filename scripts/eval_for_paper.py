@@ -154,7 +154,30 @@ def main() -> None:
     out_pkl = OUT_DIR / f"{name}_report_normal_1day.pkl"
     report.to_pickle(out_pkl)
 
-    # ── 5. Print Table 2 row + Figure 3 hint ─────────────────────
+    # ── 5. Solo cumulative-excess plot (so you can eyeball this one
+    #       factor without rebuilding the full Figure 3) ───────────
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(8.0, 4.5))
+    ax.plot(cum.index, cum.values, label=f"{name} (no cost)",
+            color="#e41a1c", linewidth=2.0)
+    ax.plot(cum_c.index, cum_c.values, label=f"{name} (with cost)",
+            color="#377eb8", linewidth=1.4, linestyle="--")
+    ax.axhline(0, color="gray", linewidth=0.6, alpha=0.6)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Cumulative Excess Return")
+    ax.set_title(f"Factor: {name} on CSI 500 ({START} ~ {END})\n"
+                 f"AR={ar_nc:+.2%} (no cost) / {ar_c:+.2%} (with cost)  "
+                 f"IC={ic_mean:+.4f}  RankIC={ric_mean:+.4f}",
+                 fontsize=10)
+    ax.legend(loc="best", frameon=True, fontsize=9)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    fig_pdf = OUT_DIR / f"{name}_cum_excess.pdf"
+    fig_png = OUT_DIR / f"{name}_cum_excess.png"
+    fig.savefig(fig_pdf)
+    fig.savefig(fig_png, dpi=200)
+
+    # ── 6. Print Table 2 row + Figure 3 hint ─────────────────────
     print(f"\n{'='*72}")
     print(f"  TABLE 2 ROW (CSI500, {START} ~ {END}, direct factor signal)")
     print(f"  factor: {name}{' (sign-flipped)' if flipped else ''}")
@@ -171,6 +194,9 @@ def main() -> None:
     print(f"  FIGURE 3 — append this line to plot_figure3.py METHOD_PKLS:")
     print(f'    "{name}": REPO / "{out_pkl.relative_to(REPO)}",')
     print(f"{'='*72}")
+    print(f"  Solo cum-excess plot saved:")
+    print(f"    {fig_pdf.relative_to(REPO)}")
+    print(f"    {fig_png.relative_to(REPO)}")
 
 
 if __name__ == "__main__":

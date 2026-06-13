@@ -10,13 +10,7 @@ data_handler_config: &data_handler_config
     fit_end_time: 2021-05-31
     instruments: *market
     infer_processors:
-        - class: FilterCol
-          kwargs:
-              fields_group: feature
-              col_list: ["RESI5", "WVMA5", "RSQR5", "KLEN", "RSQR10", "CORR5", "CORD5", "CORR10", 
-                            "ROC60", "RESI10", "VSTD5", "RSQR60", "CORR60", "WVMA60", "STD5", 
-                            "RSQR20", "CORD60", "CORD10", "CORR20", "KLOW"
-                        ]
+        # FilterCol removed: use the full Alpha158 set to match LightGBM baseline.
         - class: RobustZScoreNorm
           kwargs:
               fields_group: feature
@@ -55,8 +49,9 @@ task:
         class: TransformerModel
         module_path: qlib.contrib.model.pytorch_transformer_ts
         kwargs:
+            d_feat: 158
             seed: 0
-            n_jobs: 20
+            n_jobs: 4
     dataset:
         class: TSDatasetH
         module_path: qlib.data.dataset
