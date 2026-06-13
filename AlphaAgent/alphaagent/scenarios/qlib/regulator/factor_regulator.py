@@ -85,12 +85,14 @@ class FactorRegulator(Evaluator):
             logger.error(f"Failed to parse expression: {expression}. Error: {str(e)}")
             return False
         
-    def evaluate(self, expression: str) -> Tuple[int, str, Optional[str]]:
+    def evaluate(self, expression: str, factor_category: Optional[str] = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Evaluates an expression for duplication with existing factors in the factor zoo.
         
         Args:
             expression (str): The factor expression to evaluate.
+            factor_category (str, optional): If provided, AST duplication is
+                checked only against factors from different categories.
             
         Returns:
             Tuple containing:
@@ -100,8 +102,9 @@ class FactorRegulator(Evaluator):
         """
         try:
             # Check for duplication
+            comparison_zoo = self._comparison_zoo(factor_category)
             duplicated_subtree_size, duplicated_subtree, matched_alpha = match_alphazoo(
-                expression, self.alphazoo
+                expression, comparison_zoo
             )
             
             num_free_args = count_free_args(expression)
@@ -115,6 +118,8 @@ class FactorRegulator(Evaluator):
                         Duplicated Subtree: {duplicated_subtree}
                         # Free Args: {num_free_args}
                         # Unique Vars: {num_unique_vars}
+                        Factor Category: {factor_category if factor_category else 'unknown'}
+                        Cross-category Comparisons: {len(comparison_zoo)}
                         AST Depth: {ast_depth} (cap={self.depth_cap if self.depth_cap != math.inf else 'none'})
                         """)
 
@@ -127,6 +132,7 @@ class FactorRegulator(Evaluator):
                 "num_unique_vars": num_unique_vars,
                 "num_all_nodes": num_all_nodes,
                 "ast_depth": ast_depth,
+                "factor_category": factor_category,
                 }
             
             return True, eval_dict
@@ -134,6 +140,22 @@ class FactorRegulator(Evaluator):
         except Exception as e:
             logger.error(f"Failed to evaluate expression: {expression}. Error: {str(e)}")
             return False, None
+
+    def _comparison_zoo(self, factor_category: Optional[str]) -> pd.DataFrame:
+        if factor_category is None or self.alphazoo.empty or "factor_category" not in self.alphazoo.columns:
+            return self.alphazoo
+
+        category = self._normalize_category(factor_category)
+        zoo_categories = self.alphazoo["factor_category"].map(self._normalize_category)
+        # Keep unknown legacy rows in scope because their category cannot be
+        # safely identified. Known same-category rows are intentionally skipped.
+        return self.alphazoo[zoo_categories.isna() | (zoo_categories != category)]
+
+    @staticmethod
+    def _normalize_category(category: Any) -> Optional[str]:
+        if category is None or pd.isna(category):
+            return None
+        return str(category).strip().lower().replace("_", "-")
     
     
     def is_expression_acceptable(self, eval_dict) -> bool:
@@ -193,25 +215,53 @@ class FactorRegulator(Evaluator):
         return cond1 and cond2 and cond3 and cond_depth
     
             
-    def add_factor(self, factor_name: str, factor_expression: str) -> bool:
+    def add_factor(
+        self,
+        factor_name: str | List[str],
+        factor_expression: str | List[str],
+        factor_category: Optional[str | List[str]] = None,
+    ) -> bool:
         """
         Adds a new factor to the in-memory factor zoo if it passes the duplication check.
         
         Args:
             factor_name (str): Name of the new factor.
             factor_expression (str): Expression of the new factor.
+            factor_category (str, optional): Category/type of the new factor.
             
         Returns:
             bool: True if the factor was added, False otherwise.
         """
+        names = self._to_list(factor_name)
+        expressions = self._to_list(factor_expression)
+        if len(names) != len(expressions):
+            raise ValueError("factor_name and factor_expression must have the same length")
+
+        data = {
+            'factor_name': names,
+            'factor_expression': expressions,
+        }
+        if factor_category is not None:
+            categories = self._to_list(factor_category)
+            if len(categories) == 1 and len(names) > 1:
+                categories = categories * len(names)
+            if len(categories) != len(names):
+                raise ValueError("factor_category must be length 1 or match factor_name length")
+            data['factor_category'] = categories
+
         new_factor = pd.DataFrame({
-                'factor_name': factor_name,
-                'factor_expression': factor_expression
+                **data
                 })
             
-        self.alphazoo = pd.concat([self.alphazoo, new_factor])
-        self.new_factors.append((factor_name, factor_expression))
-        logger.info(f"Added new factor: {factor_name} with expression: {factor_expression}")
+        self.alphazoo = pd.concat([self.alphazoo, new_factor], ignore_index=True)
+        self.new_factors.extend(zip(names, expressions))
+        logger.info(f"Added new factor: {names} with expression: {expressions}")
+
+    @staticmethod
+    def _to_list(value):
+        if isinstance(value, (list, tuple, pd.Series)):
+            return list(value)
+        return [value]
             
     def save_factor_zoo(self, output_path: Optional[str] = None) -> None:
         """

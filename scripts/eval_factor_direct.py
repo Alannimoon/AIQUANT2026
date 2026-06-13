@@ -31,7 +31,7 @@ from alphaagent.components.coder.factor_coder.expr_parser import parse_expressio
 
 # Re-use any of the daily_pv.h5 already produced by a previous mine —
 # they all share the same OHLCV/return columns across CSI500.
-_DEFAULT_PV = REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/a37761649d9c4f03b90300f349778dff/daily_pv.h5"
+_DEFAULT_PV = REPO / "AlphaAgent/alphaagent/scenarios/qlib/experiment/factor_data_template/daily_pv_all.h5"
 
 
 def eval_factor(expr_str: str, daily_pv_path: Path = _DEFAULT_PV,

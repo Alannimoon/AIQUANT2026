@@ -168,6 +168,8 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
         }, True
 
     def convert(self, hypothesis: Hypothesis, trace: Trace) -> Experiment:
+        archive = _require_archive(trace)
+        _sync_regulator_factor_categories(self.factor_regulator, trace)
         context, json_flag = self.prepare_context(hypothesis, trace)
         system_prompt = (
             Environment(undefined=StrictUndefined)
@@ -191,12 +193,21 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
 
             for factor_name, factor_info in response_dict.items():
                 expr = factor_info["expression"]
+                factor_category = _resolve_category(
+                    archive,
+                    factor_info.get("category"),
+                    context["search_plan"].get("target_category"),
+                    factor_name,
+                    factor_info.get("description", ""),
+                    factor_info.get("formulation", ""),
+                    expr,
+                )
 
                 if not self.factor_regulator.is_parsable(expr):
                     logger.info(f"Skip unparsable EliteAlpha expr from {factor_name}: {expr}")
                     continue
 
-                success, eval_dict = self.factor_regulator.evaluate(expr)
+                success, eval_dict = self.factor_regulator.evaluate(expr, factor_category=factor_category)
                 if not success:
                     logger.info(f"Skip unevaluable EliteAlpha expr from {factor_name}: {expr}")
                     continue
@@ -232,7 +243,19 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
 
         proposed_names = list(accepted_response_dict)
         proposed_exprs = [factor_info["expression"] for factor_info in accepted_response_dict.values()]
-        self.factor_regulator.add_factor(proposed_names, proposed_exprs)
+        proposed_categories = [
+            _resolve_category(
+                archive,
+                factor_info.get("category"),
+                context["search_plan"].get("target_category"),
+                factor_name,
+                factor_info.get("description", ""),
+                factor_info.get("formulation", ""),
+                factor_info["expression"],
+            )
+            for factor_name, factor_info in accepted_response_dict.items()
+        ]
+        self.factor_regulator.add_factor(proposed_names, proposed_exprs, proposed_categories)
         return self.convert_response(json.dumps(accepted_response_dict), trace, context["search_plan"])
 
     def _render_user_prompt(self, context: dict[str, Any]) -> str:
@@ -504,6 +527,35 @@ def _filter_duplicate_tasks(tasks: list[FactorTask], based_experiments: list[Fac
         if not duplicate:
             unique_tasks.append(task)
     return unique_tasks
+
+
+def _sync_regulator_factor_categories(regulator: FactorRegulator, trace: Trace) -> None:
+    zoo = getattr(regulator, "alphazoo", None)
+    if zoo is None or zoo.empty:
+        return
+    if "factor_category" not in zoo.columns:
+        zoo["factor_category"] = None
+
+    by_name_and_expr = {}
+    by_expr = {}
+    for task in _collect_archive_and_history_tasks(trace):
+        category = getattr(task, "factor_category", None) or getattr(task, "elite_category", None)
+        expression = getattr(task, "factor_expression", None)
+        if not category or not expression:
+            continue
+        by_name_and_expr[(getattr(task, "factor_name", None), expression)] = category
+        by_expr.setdefault(expression, category)
+
+    for index, row in zoo.iterrows():
+        current = row.get("factor_category")
+        if current is not None and str(current).strip() and str(current).lower() != "nan":
+            continue
+        expression = row.get("factor_expression")
+        category = by_name_and_expr.get((row.get("factor_name"), expression)) or by_expr.get(expression)
+        if category:
+            zoo.at[index, "factor_category"] = category
+
+    regulator.alphazoo = zoo
 
 
 def _resolve_category(

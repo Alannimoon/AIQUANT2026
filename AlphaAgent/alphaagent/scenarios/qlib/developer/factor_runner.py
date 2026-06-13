@@ -1,6 +1,6 @@
 import pickle
 from pathlib import Path
-from typing import List
+from typing import Any, List
 import os
 import numpy as np
 import pandas as pd
@@ -18,6 +18,12 @@ from alphaagent.scenarios.qlib.experiment.factor_experiment import QlibFactorExp
 
 DIRNAME = Path(__file__).absolute().resolve().parent
 DIRNAME_local = Path.cwd()
+FACTOR_LEVEL_QUALITY_CACHE_VERSION = "paper_direct_ic_v1"
+
+
+def get_factor_runner_cache_key(self, exp: QlibFactorExperiment, **kwargs) -> str:
+    base_key = CachedRunner.get_cache_key(self, exp, **kwargs)
+    return f"{FACTOR_LEVEL_QUALITY_CACHE_VERSION}_{base_key}"
 
 # class QlibFactorExpWorkspace:
 
@@ -71,13 +77,16 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         IC_max = IC_max.unstack().max(axis=0)
         return new_feature.iloc[:, IC_max[IC_max < 0.99].index]
 
-    @cache_with_pickle(CachedRunner.get_cache_key, CachedRunner.assign_cached_result)
+    @cache_with_pickle(get_factor_runner_cache_key, CachedRunner.assign_cached_result)
     def develop(self, exp: QlibFactorExperiment, use_local: bool = True) -> QlibFactorExperiment:
         
         """
         Generate the experiment by processing and combining factor data,
         then passing the combined data to Docker or local environment for backtest results.
         """
+        config_name = f"conf.yaml" if len(exp.based_experiments) == 0 else "conf_cn_combined_kdd_ver.yaml"
+        if not hasattr(exp.experiment_workspace, "template_folder_path"):
+            exp.experiment_workspace.template_folder_path = DIRNAME.parent / "experiment" / "factor_template"
         
         if exp.based_experiments and exp.based_experiments[-1].result is None:
             exp.based_experiments[-1] = self.develop(exp.based_experiments[-1], use_local=use_local)
@@ -91,7 +100,12 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
             new_factors = self.process_factor_data(exp)
             if new_factors.empty:
                 raise FactorEmptyError("No valid factor data found to merge.")
-            self.assign_factor_level_results(exp, new_factors)
+            self.assign_factor_level_results(
+                exp,
+                new_factors,
+                qlib_config_name=config_name,
+                template_folder_path=exp.experiment_workspace.template_folder_path,
+            )
 
             # Combine the SOTA factor and new factors if SOTA factor exists
             if False: # SOTA_factor is not None and not SOTA_factor.empty:
@@ -121,10 +135,7 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
 
 
         # 执行回测，支持本地或Docker环境
-        config_name = f"conf.yaml" if len(exp.based_experiments) == 0 else "conf_cn_combined_kdd_ver.yaml"
         logger.info(f"Execute factor backtest (Use {'Local' if use_local else 'Docker container'}): {config_name}")
-        if not hasattr(exp.experiment_workspace, "template_folder_path"):
-            exp.experiment_workspace.template_folder_path = DIRNAME.parent / "experiment" / "factor_template"
         
         result = exp.experiment_workspace.execute(
             qlib_config_name=config_name,
@@ -198,13 +209,20 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         logger.info(f"IC input debug - factor matrix shape={factors.shape}, index_names={factors.index.names}")
         logger.info(f"IC input debug - per-factor summary:\n{summary.to_string(index=False)}")
 
-    def assign_factor_level_results(self, exp: QlibFactorExperiment, new_factors: pd.DataFrame) -> None:
+    def assign_factor_level_results(
+        self,
+        exp: QlibFactorExperiment,
+        new_factors: pd.DataFrame,
+        qlib_config_name: str = "conf_cn_combined_kdd_ver.yaml",
+        template_folder_path: Path | None = None,
+    ) -> None:
         """
         Store per-factor quality in exp.sub_results.
 
-        Qlib's normal result is an experiment-level score for the whole feature
-        set. MAP-Elites needs a score for each candidate factor, so we use the
-        raw factor-label cross-sectional IC as a cheap factor-level proxy.
+        Qlib's normal result is an experiment-level score for the whole feature set.
+        MAP-Elites needs a score for each candidate factor, so this follows the
+        direct-factor IC convention used by scripts/eval_for_paper.py:
+        config test window + config market + label IC + Rank-IC sign flip.
         """
         try:
             quality_factors = self.build_factor_quality_frame(exp, new_factors)
@@ -212,7 +230,24 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
                 logger.warning("Factor-level IC skipped: cannot map factor tasks to factor columns.")
                 return
 
-            quality_by_factor = self.calculate_factor_level_ic(quality_factors)
+            quality_scope = self.load_quality_scope(qlib_config_name, template_folder_path)
+            logger.info(
+                "Factor-level IC scope from "
+                f"{quality_scope.get('config_name')}: market={quality_scope.get('market')}, "
+                f"start={quality_scope.get('start_time')}, end={quality_scope.get('end_time')}, "
+                f"label={quality_scope.get('label_expr')}"
+            )
+            quality_factors = self.filter_factor_quality_frame(
+                quality_factors,
+                qlib_config_name=qlib_config_name,
+                template_folder_path=template_folder_path,
+                quality_scope=quality_scope,
+            )
+            if quality_factors.empty:
+                logger.warning(f"Factor-level IC skipped: no factor rows inside {qlib_config_name} quality scope.")
+                return
+
+            quality_by_factor = self.calculate_factor_level_ic(quality_factors, quality_scope=quality_scope)
             sub_results = {}
             for factor_name in quality_factors.columns:
                 quality = quality_by_factor.get(factor_name)
@@ -241,11 +276,210 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         matched = [task_name for task_name in task_names if task_name in quality_factors.columns]
         return quality_factors.loc[:, matched]
 
-    def calculate_factor_level_ic(self, factors: pd.DataFrame) -> dict[str, dict[str, float]]:
+    def filter_factor_quality_frame(
+        self,
+        factors: pd.DataFrame,
+        qlib_config_name: str,
+        template_folder_path: Path | None = None,
+        quality_scope: dict[str, Any] | None = None,
+    ) -> pd.DataFrame:
+        quality_scope = quality_scope or self.load_quality_scope(qlib_config_name, template_folder_path)
+        filtered = self.normalize_factor_index(factors)
+        filtered = self.align_factor_instrument_case(filtered, quality_scope)
+
+        date_range = (quality_scope.get("start_time"), quality_scope.get("end_time"))
+        if date_range[0] is None or date_range[1] is None:
+            return self.filter_factor_quality_universe(filtered, quality_scope)
+
+        datetime_level = self.get_index_level_name(filtered.index, ("datetime",))
+        if datetime_level is None:
+            logger.warning(
+                f"Factor-level IC date filter skipped: factor index has no datetime level, got {filtered.index.names}"
+            )
+            return self.filter_factor_quality_universe(filtered, quality_scope)
+
+        start_time, end_time = date_range
+        dates = pd.to_datetime(filtered.index.get_level_values(datetime_level))
+        mask = (dates >= start_time) & (dates <= end_time)
+        date_filtered = filtered.loc[mask]
+        logger.info(
+            "Factor-level IC date range from "
+            f"{qlib_config_name}: {start_time.date()} to {end_time.date()}, "
+            f"rows {len(date_filtered)}/{len(filtered)}"
+        )
+        return self.filter_factor_quality_universe(date_filtered, quality_scope)
+
+    def load_quality_scope(
+        self,
+        qlib_config_name: str,
+        template_folder_path: Path | None = None,
+    ) -> dict[str, Any]:
+        config_path = (template_folder_path or DIRNAME.parent / "experiment" / "factor_template") / qlib_config_name
+        try:
+            import yaml
+
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning(f"Factor-level IC config fallback: failed to read {config_path}: {e}")
+            config = {}
+
+        start_time, end_time = self.extract_quality_date_range(config)
+        qlib_init = config.get("qlib_init", {}) or {}
+        market = (
+            config.get("market")
+            or (config.get("data_handler_config", {}) or {}).get("instruments")
+            or "csi500"
+        )
+        region = qlib_init.get("region", "cn")
+        provider_uri = os.environ.get("QLIB_PROVIDER_URI", qlib_init.get("provider_uri", "~/.qlib/qlib_data/cn_data"))
+        label_expr = self.extract_label_expression(config) or "Ref($close, -2)/Ref($close, -1) - 1"
+        uppercase_instruments = str(market).lower() not in {"all", "csi300_ext"}
+        return {
+            "config_path": config_path,
+            "config_name": qlib_config_name,
+            "start_time": start_time,
+            "end_time": end_time,
+            "market": market,
+            "region": region,
+            "provider_uri": provider_uri,
+            "label_expr": label_expr,
+            "uppercase_instruments": uppercase_instruments,
+        }
+
+    def extract_quality_date_range(self, config: dict[str, Any]) -> tuple[pd.Timestamp | None, pd.Timestamp | None]:
+        segments = config.get("task", {}).get("dataset", {}).get("kwargs", {}).get("segments", {})
+        test_segment = segments.get("test")
+        if isinstance(test_segment, (list, tuple)) and len(test_segment) >= 2:
+            return pd.Timestamp(test_segment[0]), pd.Timestamp(test_segment[1])
+
+        backtest = config.get("port_analysis_config", {}).get("backtest", {})
+        if "start_time" in backtest and "end_time" in backtest:
+            return pd.Timestamp(backtest["start_time"]), pd.Timestamp(backtest["end_time"])
+
+        data_handler = config.get("data_handler_config", {})
+        if "start_time" in data_handler and "end_time" in data_handler:
+            return pd.Timestamp(data_handler["start_time"]), pd.Timestamp(data_handler["end_time"])
+
+        return None, None
+
+    def extract_label_expression(self, config: dict[str, Any]) -> str | None:
+        data_loader = (config.get("data_handler_config", {}) or {}).get("data_loader", {}) or {}
+        kwargs = data_loader.get("kwargs", {}) or {}
+        loaders = kwargs.get("dataloader_l")
+        if isinstance(loaders, list):
+            for loader in loaders:
+                label = ((loader or {}).get("kwargs", {}) or {}).get("config", {}).get("label")
+                expr = self.first_label_expression(label)
+                if expr:
+                    return expr
+
+        label = (kwargs.get("config", {}) or {}).get("label")
+        return self.first_label_expression(label)
+
+    @staticmethod
+    def first_label_expression(label_config: Any) -> str | None:
+        if isinstance(label_config, str):
+            return label_config
+        if isinstance(label_config, (list, tuple)) and label_config:
+            first = label_config[0]
+            if isinstance(first, str):
+                return first
+            if isinstance(first, (list, tuple)) and first and isinstance(first[0], str):
+                return first[0]
+        return None
+
+    def filter_factor_quality_universe(self, factors: pd.DataFrame, quality_scope: dict[str, Any]) -> pd.DataFrame:
+        market = quality_scope.get("market")
+        if market is None or str(market).lower() == "all":
+            return factors
+
+        instrument_level = self.get_index_level_name(factors.index, ("instrument", "code", "symbol"))
+        if instrument_level is None:
+            logger.warning(
+                f"Factor-level IC universe filter skipped: factor index has no instrument level, got {factors.index.names}"
+            )
+            return factors
+
+        try:
+            from qlib.data import D
+
+            self.init_qlib_from_scope(quality_scope)
+            start_time = quality_scope.get("start_time")
+            end_time = quality_scope.get("end_time")
+            instruments = D.list_instruments(
+                D.instruments(str(market)),
+                as_list=True,
+                start_time=start_time.strftime("%Y-%m-%d") if start_time is not None else None,
+                end_time=end_time.strftime("%Y-%m-%d") if end_time is not None else None,
+            )
+        except Exception as e:
+            logger.warning(f"Factor-level IC universe filter skipped for market={market!r}: {e}")
+            return factors
+
+        if quality_scope.get("uppercase_instruments", False):
+            universe = {str(instrument).upper() for instrument in instruments}
+        else:
+            universe = {str(instrument) for instrument in instruments}
+
+        mask = factors.index.get_level_values(instrument_level).map(str).isin(universe)
+        filtered = factors.loc[mask]
+        logger.info(
+            f"Factor-level IC universe from {quality_scope.get('config_name')}: market={market}, "
+            f"rows {len(filtered)}/{len(factors)}, instruments={len(universe)}"
+        )
+        return filtered
+
+    def align_factor_instrument_case(self, factors: pd.DataFrame, quality_scope: dict[str, Any]) -> pd.DataFrame:
+        if not quality_scope.get("uppercase_instruments", False):
+            return factors
+        return self.transform_instrument_index(factors, lambda value: str(value).upper())
+
+    def transform_instrument_index(self, df: pd.DataFrame, transform) -> pd.DataFrame:
+        instrument_level = self.get_index_level_name(df.index, ("instrument", "code", "symbol"))
+        if instrument_level is None or not isinstance(df.index, pd.MultiIndex):
+            return df
+
+        arrays = []
+        for name in df.index.names:
+            values = df.index.get_level_values(name)
+            if name == instrument_level:
+                values = values.map(transform)
+            arrays.append(values)
+
+        transformed = df.copy()
+        transformed.index = pd.MultiIndex.from_arrays(arrays, names=df.index.names)
+        return transformed.sort_index()
+
+    def init_qlib_from_scope(self, quality_scope: dict[str, Any]) -> None:
+        import qlib
+
+        provider_uri = quality_scope.get("provider_uri") or "~/.qlib/qlib_data/cn_data"
+        region = quality_scope.get("region") or "cn"
+        qlib.init(provider_uri=str(Path(provider_uri).expanduser()), region=region)
+
+    def load_quality_date_range(
+        self,
+        qlib_config_name: str,
+        template_folder_path: Path | None = None,
+    ) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+        scope = self.load_quality_scope(qlib_config_name, template_folder_path)
+        start_time, end_time = scope.get("start_time"), scope.get("end_time")
+        if start_time is not None and end_time is not None:
+            return start_time, end_time
+        logger.warning(f"Factor-level IC date filter skipped: no test/backtest date range found in {scope.get('config_path')}.")
+        return None
+
+    def calculate_factor_level_ic(
+        self,
+        factors: pd.DataFrame,
+        quality_scope: dict[str, Any] | None = None,
+    ) -> dict[str, dict[str, float]]:
+        """Compute direct-factor IC with the same sign convention as eval_for_paper.py."""
         factor_df = factors.copy()
         factor_df.columns = self.flatten_columns(factor_df.columns)
         factor_df = self.normalize_factor_index(factor_df)
-        label = self.load_qlib_label(factor_df.index)
+        label = self.load_qlib_label(factor_df.index, quality_scope=quality_scope)
         if label is None or label.empty:
             raise ValueError("label series is empty")
 
@@ -265,13 +499,11 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
 
             daily_rows = []
             for _, group in pair.groupby(level="datetime"):
-                if len(group) < 2:
-                    daily_rows.append((np.nan, np.nan))
+                if len(group) < 5:
                     continue
                 factor_std = group["factor"].std()
                 label_std = group["label"].std()
                 if pd.isna(factor_std) or pd.isna(label_std) or factor_std == 0 or label_std == 0:
-                    daily_rows.append((np.nan, np.nan))
                     continue
                 daily_rows.append(
                     (
@@ -281,13 +513,33 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
                 )
 
             daily_ic = pd.DataFrame(daily_rows, columns=["IC", "Rank IC"])
+            if daily_ic.empty:
+                results[column] = {"IC": np.nan, "Rank IC": np.nan, "ICIR": np.nan, "Rank ICIR": np.nan}
+                continue
+
+            ic_mean = float(daily_ic["IC"].mean()) if daily_ic["IC"].notna().any() else np.nan
+            rank_ic_mean = float(daily_ic["Rank IC"].mean()) if daily_ic["Rank IC"].notna().any() else np.nan
+            sign_flipped = bool(pd.notna(rank_ic_mean) and rank_ic_mean < 0)
+            if sign_flipped:
+                daily_ic["IC"] = -daily_ic["IC"]
+                daily_ic["Rank IC"] = -daily_ic["Rank IC"]
+                ic_mean = -ic_mean if pd.notna(ic_mean) else ic_mean
+                rank_ic_mean = -rank_ic_mean
+
+            ic_std = daily_ic["IC"].std()
+            rank_ic_std = daily_ic["Rank IC"].std()
             results[column] = {
-                "IC": float(daily_ic["IC"].mean()) if daily_ic["IC"].notna().any() else np.nan,
-                "Rank IC": float(daily_ic["Rank IC"].mean()) if daily_ic["Rank IC"].notna().any() else np.nan,
+                "IC": ic_mean,
+                "Rank IC": rank_ic_mean,
+                "ICIR": float(ic_mean / (ic_std + 1e-12)) if pd.notna(ic_mean) and pd.notna(ic_std) else np.nan,
+                "Rank ICIR": float(rank_ic_mean / (rank_ic_std + 1e-12))
+                if pd.notna(rank_ic_mean) and pd.notna(rank_ic_std)
+                else np.nan,
+                "sign_flipped": sign_flipped,
             }
         return results
 
-    def load_qlib_label(self, index: pd.Index) -> pd.Series:
+    def load_qlib_label(self, index: pd.Index, quality_scope: dict[str, Any] | None = None) -> pd.Series:
         datetime_level = self.get_index_level_name(index, ("datetime",))
         instrument_level = self.get_index_level_name(index, ("instrument", "code", "symbol"))
         if datetime_level is None or instrument_level is None:
@@ -298,15 +550,14 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         start_time = pd.Timestamp(dates.min()).strftime("%Y-%m-%d")
         end_time = pd.Timestamp(dates.max()).strftime("%Y-%m-%d")
 
-        import qlib
-        from qlib.config import REG_CN
         from qlib.data import D
 
-        provider_uri = os.environ.get("QLIB_PROVIDER_URI", "~/.qlib/qlib_data/cn_data")
-        qlib.init(provider_uri=str(Path(provider_uri).expanduser()), region=REG_CN)
+        quality_scope = quality_scope or {}
+        self.init_qlib_from_scope(quality_scope)
+        label_expr = quality_scope.get("label_expr") or "Ref($close, -2)/Ref($close, -1) - 1"
         label_df = D.features(
             instruments,
-            ["Ref($close, -2)/Ref($close, -1) - 1"],
+            [label_expr],
             start_time=start_time,
             end_time=end_time,
             freq="day",

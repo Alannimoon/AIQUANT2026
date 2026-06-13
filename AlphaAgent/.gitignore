@@ -173,7 +173,6 @@ mlruns/
 
 # shell script
 *.out
-*.sh
 
 *_debug*
 *.ipynb
@@ -192,3 +191,6 @@ alphaagent/scenarios/data_mining/
 alphaagent/scenarios/general_model/
 alphaagent/scenarios/kaggle/
 backend/
+
+elite_archive_progress.log
+elite_run_stdout_stderr.log

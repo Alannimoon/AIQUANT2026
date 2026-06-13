@@ -354,8 +354,15 @@ def match_alphazoo(prop_expr, factor_df):
     max_size = 0
     matched_subtree = None
     matched_alpha = None
-    for index, (name, alpha_expr) in factor_df.iterrows():
+    for index, row in factor_df.iterrows():
         try:
+            if "factor_expression" in factor_df.columns:
+                alpha_expr = row["factor_expression"]
+            else:
+                values = list(row)
+                if len(values) < 2:
+                    continue
+                alpha_expr = values[1]
             match = compare_expressions(prop_expr, alpha_expr)
             if match is not None and match.size > max_size:
                  max_size = match.size
