@@ -6,8 +6,8 @@ market: &market csi500
 benchmark: &benchmark SH000905
 
 data_handler_config: &data_handler_config
-    start_time: 2015-01-01
-    end_time: 2025-03-31
+    start_time: 2015-06-01
+    end_time: 2026-05-31
     instruments: *market
     data_loader:
         class: NestedDataLoader
@@ -57,8 +57,8 @@ port_analysis_config: &port_analysis_config
             topk: 50
             n_drop: 5
     backtest:
-        start_time: 2021-01-01
-        end_time: 2024-12-30
+        start_time: 2021-06-01
+        end_time: 2026-05-31
         # start_time: 2020-01-01
         # end_time: 2024-12-30
         account: 100000000
@@ -95,9 +95,9 @@ task:
                 # train: [2015-01-01, 2019-12-31]
                 # valid: [2020-01-01, 2020-12-31]
                 # test: [2021-01-01, 2025-03-31]
-                train: [2015-01-01, 2019-12-31]
-                valid: [2020-01-01, 2020-12-31]
-                test: [2021-01-01, 2024-12-30]
+                train: [2015-06-01, 2020-05-31]
+                valid: [2020-06-01, 2021-05-31]
+                test: [2021-06-01, 2026-05-31]
     record: 
         - class: SignalRecord
           module_path: qlib.workflow.record_temp
