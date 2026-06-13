@@ -4,8 +4,12 @@ Reads each baseline's Qlib `report_normal_1day.pkl` (the daily portfolio
 report), computes daily excess return = portfolio return - benchmark return,
 and plots the cumulative sum as a time series. One line per method.
 
-This is the visual companion of Table 2: same numbers, but over time, so
-factor decay shows up as the slope going flat / negative for weaker methods.
+Baseline pkls (LightGBM / LSTM / Transformer / AlphaAgent) are bundled in
+`baselines/figure3_baseline_pkls/` — committed to the repo so anyone can
+reproduce the figure without re-training. To add your own method (e.g.,
+EliteAlpha), run `scripts/eval_for_paper.py` to produce a pkl, then either
+move it into `figure3_baseline_pkls/` or just append a `METHOD_PKLS`
+entry below.
 
 Usage:
     python scripts/plot_figure3.py
@@ -21,15 +25,16 @@ REPO = Path(__file__).resolve().parent.parent
 FIG_DIR = REPO / "figures"
 FIG_DIR.mkdir(exist_ok=True)
 
-# Map each method to the path of its `report_normal_1day.pkl`. As new
-# baselines finish (LSTM, Transformer, AlphaAgent, EliteAlpha...), append
-# entries here.
+_PKL_DIR = REPO / "baselines" / "figure3_baseline_pkls"
+
+# Bundled baselines (committed to the repo) + any direct-factor pkls added
+# via `eval_for_paper.py`. To add a new method, just append a line.
 METHOD_PKLS: dict[str, Path] = {
-    "LightGBM":   REPO / "baselines/mlruns/209613909970893617/ea6406b82b904a8fba2832cf1290a856/artifacts/portfolio_analysis/report_normal_1day.pkl",
-    "LSTM":       REPO / "baselines/mlruns/209613909970893617/426253fc7bcc4d0cadee1dfec21ed92a/artifacts/portfolio_analysis/report_normal_1day.pkl",
-    "Transformer":REPO / "baselines/mlruns/209613909970893617/ebafbf67d27c420cb706c44ded7f8a4d/artifacts/portfolio_analysis/report_normal_1day.pkl",
-    "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/RD-Agent_workspace/f1332f69e40e48f1bdbb0f9df7620854/mlruns/284224144358219592/38c38f8df6fe49ca99ddd3c22fe0f7a1/artifacts/portfolio_analysis/report_normal_1day.pkl",
-    "EliteAlpha": REPO / "baselines/direct_factor_backtests/elitealpha_sota_csi500_report_normal_1day.pkl",
+    "LightGBM":   _PKL_DIR / "lightgbm.pkl",
+    "LSTM":       _PKL_DIR / "lstm.pkl",
+    "Transformer": _PKL_DIR / "transformer.pkl",
+    "AlphaAgent": _PKL_DIR / "alphaagent.pkl",
+    "EliteAlpha": REPO / "baselines/direct_factor_backtests/EliteAlpha_v2_report_normal_1day.pkl",
 }
 
 # Color + linewidth per method (论文里 AlphaAgent / EliteAlpha 用粗实线突出).
