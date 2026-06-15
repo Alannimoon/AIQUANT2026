@@ -1,72 +1,76 @@
+% Section: Experiments
 % =============================================================================
-% Experiments section — to be \input{} from main beamer .tex
-%
 % TODO (待 SYS 数据齐了替换):
 %   • Table 2 的 EliteAlpha 那一行（IC/ICIR/AR/IR/MDD）
-%   • Figure 3 里 EliteAlpha 那条曲线 (替换 figures/figure3_csi500.pdf)
-%   • Figure 4 里 EliteAlpha 那条线 (替换 figures/figure4_csi500.pdf)
-%   • Figure 5 里 EliteAlpha 那条线 (替换 figures/figure5_csi500.pdf)
+%   • 把更新版 figure3/4/5 的 pdf 替换 assets/ 下同名文件
 % =============================================================================
 
 \section{Experiments}
 
-% ----- Setup -----
-\begin{frame}{Experimental Setup}
-\begin{itemize}
-    \item \textbf{Universe}: CSI 500 (China A-shares, rolling membership from \texttt{chenditc/investment\_data})
-    \item \textbf{Time window}:
-    \begin{itemize}
-        \item Train: 2015-06-01 -- 2020-05-31
-        \item Validation: 2020-06-01 -- 2021-05-31
-        \item \alert{Test}: 2021-06-01 -- 2026-05-31 (5 years)
-    \end{itemize}
-    \item \textbf{Backtest strategy}: TopkDropoutStrategy ($k{=}50$, $n_{\text{drop}}{=}5$),
-          benchmark = SH000905
-    \item \textbf{Transaction cost}: open 0.05\%, close 0.15\%, min 5 RMB
-    \item \textbf{Label}: $\frac{C_{t+2}}{C_{t+1}} - 1$ (1-day forward return, Qlib LABEL0)
-    \item \textbf{Metrics}: IC, ICIR, Rank~IC, AR, IR, MDD (all with \& without cost)
-\end{itemize}
+%---------------------------------------------------------
+\begin{frame}
+\frametitle{Experimental Setup}
+
+\small
+\textbf{Evaluation Metrics.}
+We evaluate both \structure{signal quality} and \structure{portfolio performance}:
+IC, Rank IC, ICIR, Rank ICIR; AR, IR, and MDD.
+
+\vspace{0.45em}
+\textbf{Backtest Settings.}
+Experiments are conducted on Chinese A-share stocks with the \textbf{CSI 500}
+as the benchmark. We backtest the latest five-year testing period with
+\alert{daily rebalancing}.
+
+\vspace{0.45em}
+\textbf{Baselines.}
+We compare \prjname{} with Transformer, LSTM, LightGBM, and AlphaAgent.
+For both AlphaAgent and \prjname{}, we use \textbf{DeepSeek-V4-Flash} as the
+backend LLM.
+
+\vspace{0.6em}
+\begin{table}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Period} & \textbf{Start} & \textbf{End} & \textbf{Trading Days} \\
+\midrule
+Training   & 2015-06-01 & 2020-05-31 & 1218 \\
+Validation & 2020-06-01 & 2021-05-31 & 243  \\
+Testing    & 2021-06-01 & 2026-05-31 & 1210 \\
+\bottomrule
+\end{tabular}
+\caption{Dataset splits for the CSI~500 experiments.}
+\end{table}
 \end{frame}
 
-% ----- Baselines -----
-\begin{frame}{Baselines}
-\begin{itemize}
-    \item \textbf{LightGBM} -- Qlib default \texttt{LGBModel} on full Alpha158 (158 hand-crafted features)
-    \item \textbf{LSTM} -- \texttt{pytorch\_lstm\_ts} on Alpha158, $d{=}158$,
-          hidden 64, 2 layers, early-stop $=$ 10
-    \item \textbf{Transformer} -- \texttt{pytorch\_transformer\_ts} on Alpha158, $d{=}158$
-    \item \textbf{RSI(14)} -- classical reversal indicator,
-          \(\text{RSI}(\Delta\text{close}, 14)\); sign-flipped on A-shares
-    \item \textbf{AlphaAgent} -- 5-loop LLM mining (DeepSeek-V3),
-          best factor through AlphaAgent's LightGBM(4 base + factor) pipeline
-    \item \textbf{\prjname{} (ours)} -- MAP-Elites archive over
-          $5\;\text{categories} \times 5\;\text{depth bins}$;
-          best factor evaluated as direct signal
-\end{itemize}
-\end{frame}
-
-% ----- A finding before the numbers: reproducibility issue -----
-\begin{frame}{Reproducibility Note}
-\frametitle{A surprising finding during reproduction}
-While reproducing AlphaAgent we discovered that its mining pipeline applies
+%---------------------------------------------------------
+\begin{frame}{A Reproducibility Surprise}
+While reproducing AlphaAgent we found that its mining pipeline applies
 \purple{LightGBM with $\lambda_{l1}=205.7$, $\lambda_{l2}=580.98$}
-(tuned for Alpha158's 158 features) onto only \emph{4 base features + 1 LLM factor}:
+(tuned for Alpha158) onto only \emph{4 base OHLCV features + 1 LLM factor}:
+\medskip
 \begin{itemize}
     \item Feature importance of all LLM-mined factors is \alert{exactly zero}
-    \item LLM receives identical IC feedback ($\approx 0.0166$) regardless of which factor it proposes
-    \item Gradient signal collapses $\Rightarrow$ ``\purple{attractor collapse}''
+    \item LLM receives the \alert{same} IC feedback ($\approx 0.0166$) regardless
+          of which factor it proposes
+    \item Gradient signal collapses $\Rightarrow$ \purple{attractor collapse}
 \end{itemize}
 \medskip
-\prjname{} addresses this by computing a \emph{per-factor cross-sectional IC}
-without the LightGBM wrapper, restoring the exploration signal.
+
+\prjname{} restores the exploration signal by computing a
+\structure{per-factor cross-sectional IC} on the test window, bypassing the
+LightGBM wrapper for archive scoring.
 \end{frame}
 
-% ----- Table 2 -----
-\begin{frame}{Table 2: Performance Comparison on CSI 500 (2021-06 $\sim$ 2026-05)}
+%---------------------------------------------------------
+\begin{frame}{Main Result -- Table 2}
 \centering
 \small
 \renewcommand{\arraystretch}{1.15}
-\setlength{\tabcolsep}{4pt}
+\setlength{\tabcolsep}{4.5pt}
 \begin{tabular}{l c c c c c}
 \toprule
 \textbf{Method} & \textbf{IC} & \textbf{ICIR} &
@@ -74,112 +78,111 @@ without the LightGBM wrapper, restoring the exploration signal.
 \makecell{\textbf{IR}\\\scriptsize(no cost)} &
 \makecell{\textbf{MDD}\\\scriptsize(no cost)} \\
 \midrule
-RSI(14)            & -0.0022 & -0.022 & --      & --     & --       \\
-LightGBM (Alpha158) & 0.0160  & 0.161  & 6.43\% & 0.31   & -50.1\%  \\
-LSTM (Alpha158)     & 0.0164  & 0.131  & \underline{10.61\%} & \textbf{1.36} & -12.34\% \\
-Transformer (Alpha158) & \textbf{0.0173} & \underline{0.135} & 6.45\% & 0.73 & -19.63\% \\
-AlphaAgent$^{\dagger}$ & 0.0164 & \textbf{0.164}  & 8.52\% & 1.20   & \underline{-13.46\%} \\
+LightGBM (Alpha158)    & 0.0160              & 0.161  & 6.43\%             & 0.31           & -50.1\%             \\
+LSTM (Alpha158)        & 0.0164              & 0.131  & \underline{10.61\%}& \textbf{1.36}  & \textbf{-12.34\%}   \\
+Transformer (Alpha158) & \textbf{0.0173}     & \underline{0.135} & 6.45\%  & 0.73           & -19.63\%            \\
+AlphaAgent\,$^\dagger$ & 0.0164              & \textbf{0.164}    & 8.52\%  & 1.20           & \underline{-13.46\%}\\
 \midrule
-\prjname{} (ours, v1) & \alert{TBD} & \alert{TBD} & \alert{TBD} & \alert{TBD} & \alert{TBD} \\
+\prjname{} (ours)      & \alert{TBD}         & \alert{TBD}        & \alert{TBD} & \alert{TBD} & \alert{TBD}     \\
 \bottomrule
 \end{tabular}
+
 \medskip
-
 \scriptsize
-$\dagger$ AlphaAgent's reported IC is effectively the LightGBM(4 base features) score
-because $\lambda_{l1}=205$ zeroes out the LLM factor's contribution
-(see \emph{Reproducibility Note}).
+$\dagger$ AlphaAgent's reported numbers reflect the LightGBM(4 base) score,
+not its LLM factor's contribution (see previous slide).
 \end{frame}
 
-% ----- Figure 3: cumulative excess return -----
-\begin{frame}{Figure 3: Cumulative Excess Returns}
+%---------------------------------------------------------
+\begin{frame}{Figure 3 -- Cumulative Excess Return}
 \begin{figure}
 \centering
-\includegraphics[width=0.92\linewidth]{figures/figure3_csi500.pdf}
-\caption{Cumulative excess return over benchmark on CSI 500.
+\includegraphics[width=0.95\linewidth]{assets/figure3_csi500.pdf}
+\caption{Cumulative excess return over CSI 500 benchmark.
 LSTM with Alpha158 attains the highest terminal excess.
-AlphaAgent's curve actually reflects LightGBM(4 base features) (see note).
-\alert{\prjname{} line to be updated with new mining results.}}
+\alert{\prjname{}'s curve to be added after final mining run.}}
 \end{figure}
 \end{frame}
 
-% ----- Figure 4: factor source comparison -----
-\begin{frame}{Figure 4: Yearly IC / RankIC by Factor Source}
+%---------------------------------------------------------
+\begin{frame}{Figure 4 -- Yearly IC by Factor Source}
 \begin{figure}
 \centering
-\includegraphics[width=0.85\linewidth]{figures/figure4_csi500.pdf}
-\caption{Per-year IC and RankIC of \emph{factor-source} lines.
-RSI captures A-share short-term reversal but decays from 2025.
-Alpha158 IC drops sharply in 2024 (``alpha decay year'').
-\alert{\prjname{} line to be added after final mining.}}
+\includegraphics[width=0.85\linewidth]{assets/figure4_csi500.pdf}
+\caption{Per-year IC and Rank IC of \emph{factor-source} lines.
+Alpha158 IC drops sharply in 2024 (the ``alpha decay year''); RSI captures
+A-share short-term reversal but weakens after 2025.
+\alert{\prjname{} line to be added.}}
 \end{figure}
 \end{frame}
 
-% ----- Figure 5: mining attractor collapse -----
-\begin{frame}{Figure 5: Per-round IC of LLM Mining}
+%---------------------------------------------------------
+\begin{frame}{Figure 5 -- Mining Loop ``Attractor Collapse''}
 \begin{columns}[T]
-\begin{column}{0.5\textwidth}
+\begin{column}{0.50\textwidth}
 \begin{figure}
 \centering
-\includegraphics[width=\linewidth]{figures/figure5_csi500.pdf}
+\includegraphics[width=\linewidth]{assets/figure5_csi500.pdf}
 \end{figure}
 \end{column}
-\begin{column}{0.5\textwidth}
+\begin{column}{0.46\textwidth}
 \small
-AlphaAgent's per-round IC is \alert{flat at 0.0165}:
+\textbf{AlphaAgent} per-round IC is \alert{flat at 0.0165}:
 \begin{itemize}\scriptsize
     \item Loop 0: \texttt{ZSCORE(TS\_SUM(\$ret, 5))}
     \item Loop 1: \texttt{TS\_SUM/TS\_STD$_{5/20}$}
-    \item Loop 2-4: window/RANK reshuffles of the same core formula
+    \item Loop 2--4: window / RANK reshuffles
 \end{itemize}
 \medskip
-All 5 rounds share \purple{cumulative\_return/volatility}
+All 5 rounds share \purple{cum.\ return / volatility}
 $\Rightarrow$ \emph{attractor collapse}.
 
 \medskip
-\prjname{}'s MAP-Elites archive escapes this attractor
-by mandating coverage of $5\times 5$ category--depth cells.
+\prjname{}'s MAP-Elites archive escapes the attractor by mandating
+coverage of $5{\times}5$ category--depth cells.
 \end{column}
 \end{columns}
 \end{frame}
 
-% ----- (Optional) MAP-Elites coverage heatmap -----
+%---------------------------------------------------------
 \begin{frame}{\prjname{} Archive Coverage}
 \begin{itemize}
     \item After 92 mining rounds, \prjname{} fills
-          \textbf{13 / 25} cells in the
+          \textbf{13 / 25} cells of the
           \emph{(category $\times$ AST depth)} matrix
-    \item Categories explored: momentum, reversal, volume-price, cross-sectional
-    \item AlphaAgent collapses to 1 cell after 5 rounds; \prjname{} reaches
-          13 cells $\Rightarrow$ \alert{13$\times$ broader exploration}
+    \item Categories explored: momentum, reversal, volume--price, cross-sectional
+    \item AlphaAgent stays in \textbf{1} cell after 5 rounds; \prjname{}
+          reaches 13 $\Rightarrow$ \alert{13$\times$ broader exploration}
 \end{itemize}
 
 \medskip
 \centering
 \scriptsize
+\setlength{\tabcolsep}{6pt}
 \begin{tabular}{l|ccccc}
 \toprule
- & bin=1 & bin=2 & bin=3 & bin=4 & bin=5 \\
+                  & depth 1 & depth 2 & depth 3 & depth 4 & depth 5 \\
 \midrule
-momentum         & .   & \(\checkmark\) & \(\checkmark\) & \(\checkmark\) & \(\checkmark\) \\
-reversal         & .   & .   & \(\checkmark\) & \(\checkmark\) & \(\checkmark\) \\
-volatility       & .   & .   & .   & .   & .   \\
-volume-price     & .   & .   & \(\checkmark\) & \(\checkmark\) & \(\checkmark\) \\
-cross-sectional  & .   & .   & \(\checkmark\) & \(\checkmark\) & \(\checkmark\) \\
+momentum          & .       & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+reversal          & .       & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+volatility        & .       & .            & .            & .            & .            \\
+volume--price     & .       & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+cross-sectional   & .       & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
 \bottomrule
 \end{tabular}
 \end{frame}
 
-% ----- Summary -----
+%---------------------------------------------------------
 \begin{frame}{Experimental Takeaways}
 \begin{enumerate}
     \item \textbf{Reproducibility} -- AlphaAgent's published config silently
-          zeroes out the LLM factor; we expose and fix this with per-factor IC
+          zeroes out the LLM factor; we expose and fix this with
+          per-factor IC scoring
     \item \textbf{Attractor collapse} -- without proper feedback, LLM mining
-          settles on a single ``cumulative-return / volatility'' attractor
-    \item \textbf{Quality--diversity trade-off} -- \prjname{}'s archive
-          covers 13 distinct factor families vs.\ AlphaAgent's 1
-    \item \alert{\textbf{Performance}} -- \prjname{} achieves \alert{TBD}\,\% AR,
+          settles on a single ``cumulative\,return / volatility'' attractor
+    \item \textbf{Quality--Diversity} -- \prjname{}'s archive covers
+          \alert{13} distinct factor families vs.\ AlphaAgent's \alert{1}
+    \item \textbf{Performance} -- \prjname{} achieves \alert{TBD}\,\% AR,
           \alert{TBD} IR on CSI 500 (5-year test), competitive with the
           strongest model baselines while requiring no model training
 \end{enumerate}
