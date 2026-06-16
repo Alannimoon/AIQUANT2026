@@ -45,39 +45,56 @@ ALPHAAGENT_OURS = {
     ],
 }
 
-# Placeholder. SYS will provide real per-round mean IC + std once the
-# MAP-Elites archive is implemented. Until then, draw nothing for it.
-ELITEALPHA_OURS = None  # {"rounds": [...], "ic_mean": [...], "ic_std": [...]}
+# Per-round best (i.e. max archive quality so far) extracted from SYS's
+# `elite_archive_progress.log` v3 (run 2026-06-14, 46 rounds, 9 cells filled).
+ELITEALPHA_OURS = {
+    "rounds": list(range(1, 47)) if False else
+              [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,21,22,23,24,25,
+               26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46],
+    "best":   [0.00205,0.00205,0.00205,0.00205,0.00205,0.00205,0.00205,0.00205,0.00205,
+               0.00205,0.00205,0.00205,0.00205,0.00212,0.00212,0.00212,0.00340,0.00340,
+               0.00340,0.00340,0.00357,0.00357,0.00470,0.00470,0.00470,0.00470,0.00470,
+               0.00470,0.00470,0.00470,0.00470,0.00470,0.00470,0.00470,0.00470,0.00527,
+               0.00527,0.00527,0.00527,0.00527,0.00527,0.00527,0.00639,0.00639,0.00639],
+    "mean":   [0.00205,0.00205,0.00154,0.00168,0.00168,0.00176,0.00179,0.00179,0.00179,
+               0.00179,0.00157,0.00157,0.00149,0.00157,0.00168,0.00169,0.00187,0.00187,
+               0.00187,0.00188,0.00190,0.00205,0.00250,0.00253,0.00253,0.00253,0.00264,
+               0.00264,0.00265,0.00265,0.00265,0.00265,0.00265,0.00265,0.00276,0.00310,
+               0.00310,0.00315,0.00315,0.00315,0.00339,0.00339,0.00351,0.00351,0.00356],
+}
 
 
 def main() -> None:
-    fig, ax = plt.subplots(figsize=(7.5, 4.5))
+    fig, ax = plt.subplots(figsize=(8.5, 4.8))
 
-    rounds = ALPHAAGENT_OURS["rounds"]
-    ic = ALPHAAGENT_OURS["ic"]
-    ax.plot(rounds, ic, color="#e41a1c", linewidth=2.2, marker="o",
-            markersize=8, label="AlphaAgent (ours, DeepSeek + CSI500)")
+    # AlphaAgent: 5-round flat line (left axis range needs widening to fit both)
+    rounds_aa = ALPHAAGENT_OURS["rounds"]
+    ic_aa = ALPHAAGENT_OURS["ic"]
+    ax.plot(rounds_aa, ic_aa, color="#e41a1c", linewidth=2.2, marker="o",
+            markersize=7, label="AlphaAgent (5 loops, IC via LightGBM wrapper)")
 
-    # Optional ELITEALPHA line.
-    if ELITEALPHA_OURS is not None:
-        rr = ELITEALPHA_OURS["rounds"]
-        m = ELITEALPHA_OURS["ic_mean"]
-        s = ELITEALPHA_OURS["ic_std"]
-        ax.plot(rr, m, color="#000000", linewidth=2.5, marker="D",
-                markersize=8, label="EliteAlpha (ours, MAP-Elites)")
-        ax.fill_between(rr, [a - b for a, b in zip(m, s)],
-                        [a + b for a, b in zip(m, s)],
-                        color="#000000", alpha=0.18, label="EliteAlpha ±1 std")
+    # EliteAlpha: 46-round rising trajectory (per-round best archive quality)
+    rounds_ea = ELITEALPHA_OURS["rounds"]
+    best = ELITEALPHA_OURS["best"]
+    mean_ = ELITEALPHA_OURS["mean"]
+    ax.plot(rounds_ea, best, color="#000000", linewidth=2.4, marker="D",
+            markersize=4, label="EliteAlpha (MAP-Elites, archive best)")
+    ax.plot(rounds_ea, mean_, color="#666666", linewidth=1.4, linestyle="--",
+            marker="", label="EliteAlpha (archive mean)")
 
-    ax.set_xlabel("Round")
-    ax.set_ylabel("IC")
-    ax.set_xticks(rounds)
-    ax.set_ylim(0.014, 0.020)
+    ax.set_xlabel("Mining Round")
+    ax.set_ylabel("Per-round Best IC (Pearson)")
+    ax.set_ylim(0.000, 0.020)
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left", frameon=True, fontsize=10)
-    ax.set_title("Figure 5: Per-round IC of AlphaAgent's mining loop on CSI 500\n"
-                 "(flat trajectory $\\Rightarrow$ attractor collapse — motivates ELITEALPHA)",
+    ax.legend(loc="upper left", frameon=True, fontsize=9)
+    ax.set_title("Figure 5: Mining trajectory comparison on CSI 500\n"
+                 "AlphaAgent: flat 5-loop (attractor collapse) | "
+                 "ELITEALPHA: 3$\\times$ rise over 46 rounds",
                  fontsize=11)
+    # AlphaAgent's IC is computed via the LightGBM-wrapped pipeline so it is
+    # bounded by base-feature LightGBM (~0.016). ELITEALPHA uses direct factor
+    # IC, naturally on a smaller absolute scale but rising — the shapes are
+    # what matter.
 
     fig.tight_layout()
     out_pdf = FIG_DIR / "figure5_csi500.pdf"

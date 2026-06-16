@@ -68,29 +68,35 @@ LightGBM wrapper for archive scoring.
 %---------------------------------------------------------
 \begin{frame}{Main Result -- Table 2}
 \centering
-\small
+\scriptsize
 \renewcommand{\arraystretch}{1.15}
-\setlength{\tabcolsep}{4.5pt}
-\begin{tabular}{l c c c c c}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{l c c c c c c c}
 \toprule
-\textbf{Method} & \textbf{IC} & \textbf{ICIR} &
+\textbf{Method} & \textbf{IC} & \textbf{Rank IC} & \textbf{ICIR} &
+\textbf{Rank ICIR} &
 \makecell{\textbf{AR}\\\scriptsize(no cost)} &
 \makecell{\textbf{IR}\\\scriptsize(no cost)} &
 \makecell{\textbf{MDD}\\\scriptsize(no cost)} \\
 \midrule
-LightGBM (Alpha158)    & 0.0160              & 0.161  & 6.43\%             & 0.31           & -50.1\%             \\
-LSTM (Alpha158)        & 0.0164              & 0.131  & \underline{10.61\%}& \textbf{1.36}  & \textbf{-12.34\%}   \\
-Transformer (Alpha158) & \textbf{0.0173}     & \underline{0.135} & 6.45\%  & 0.73           & -19.63\%            \\
-AlphaAgent\,$^\dagger$ & 0.0164              & \textbf{0.164}    & 8.52\%  & 1.20           & \underline{-13.46\%}\\
+LightGBM (Alpha158)    & 0.0160          & 0.0148                & 0.139           & 0.132           & 6.43\%                 & 0.31           & -50.1\%             \\
+LSTM (Alpha158)        & 0.0164          & \textbf{0.0420}       & 0.131           & \textbf{0.345}  & \underline{10.61\%}    & \underline{1.36} & \textbf{-12.34\%} \\
+Transformer (Alpha158) & \textbf{0.0173} & \underline{0.0404}    & \underline{0.135} & \underline{0.317} & 6.45\%               & 0.73           & -19.63\%            \\
+AlphaAgent\,$^\dagger$ & 0.0164          & 0.0085                & \textbf{0.164}  & 0.084           & 8.52\%                 & 1.20           & \underline{-13.46\%}\\
 \midrule
-\prjname{} (ours)      & \alert{0.0084}      & \alert{0.072}      & \alert{\textbf{15.69\%}} & \alert{\textbf{1.46}} & \alert{-13.16\%}\\
+\prjname{} (ours)      & \alert{0.0084}  & \alert{0.0322}        & \alert{0.066}   & \alert{0.217}   & \alert{\textbf{15.69\%}} & \alert{\textbf{1.46}} & \alert{-13.16\%}\\
 \bottomrule
 \end{tabular}
 
 \medskip
 \scriptsize
-$\dagger$ AlphaAgent's reported numbers reflect the LightGBM(4 base) score,
-not its LLM factor's contribution (see previous slide).
+$\dagger$ AlphaAgent's IC reflects the LightGBM(4 base feature) score,
+not the LLM factor's contribution (see previous slide).
+
+\smallskip
+\structure{Note}: \prjname{}'s lower Pearson IC is an artifact of using the
+\emph{raw factor signal} (vs.~model-fitted predictions). Its \textbf{Rank IC
+is competitive} and its \textbf{portfolio metrics (AR, IR) are the strongest}.
 \end{frame}
 
 %---------------------------------------------------------

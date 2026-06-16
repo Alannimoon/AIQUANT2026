@@ -131,6 +131,17 @@ def signal_from_pred(pkl_path: Path) -> pd.Series:
     return _normalize_index(pred)
 
 
+def signal_elitealpha_v3() -> pd.Series:
+    """Direct factor signal for ELITEALPHA's v3 SOTA expression."""
+    import sys
+    sys.path.insert(0, str(REPO / "scripts"))
+    from eval_factor_direct import eval_factor
+    expr = "ZSCORE(TS_SUM(($high - $close) * $volume, 5))"
+    sig = eval_factor(expr, upper_instrument=True)
+    sig = sig.loc[(slice(pd.Timestamp(WINDOW_START), pd.Timestamp(WINDOW_END)), slice(None))]
+    return _normalize_index(sig)
+
+
 # ── IC computation ──────────────────────────────────────────────────────────
 def per_day_ic(pred: pd.Series, label: pd.Series) -> pd.DataFrame:
     pred = _normalize_index(pred)
@@ -202,6 +213,12 @@ def main() -> None:
         yr = evaluate_source(name, signal_from_pred(pkl), label, auto_flip=False)
         if yr is not None:
             results[name] = yr
+
+    # 3) ELITEALPHA v3 — direct factor signal (no LightGBM wrapping).
+    print("computing ELITEALPHA v3 factor signal...")
+    yr = evaluate_source("EliteAlpha", signal_elitealpha_v3(), label, auto_flip=True)
+    if yr is not None:
+        results["EliteAlpha"] = yr
 
     if not results:
         print("Nothing to plot.")
