@@ -48,3 +48,55 @@ AlphaAgent/run_logs/*.log`.
 cp <pkl above> baselines/figure3_baseline_pkls/<name>.pkl   # name = lightgbm / lstm / transformer / alphaagent
 python scripts/plot_figure3.py
 ```
+
+## Figure 4 (yearly IC by factor source)
+
+Reads `pred.pkl` (not `report_normal_1day.pkl`) from the same `mlruns/`
+artifacts. Default config already wires up Alpha158 (LightGBM's pred) +
+RSI(14) computed inline + AlphaAgent's SOTA pred. Add your method:
+
+```python
+# scripts/plot_figure4.py, edit PRED_PATHS dict:
+PRED_PATHS = {
+    "Alpha158":   REPO / "baselines/mlruns/<exp>/<run>/artifacts/pred.pkl",
+    "AlphaAgent": REPO / "AlphaAgent/git_ignore_folder/.../mlruns/.../artifacts/pred.pkl",
+    "<YourMethod>": REPO / "path/to/pred.pkl",
+}
+```
+
+Run:
+
+```bash
+python scripts/plot_figure4.py   # → figures/figure4_csi500.{pdf,png}
+```
+
+## Figure 5 (per-round IC of mining loop)
+
+Data comes from the mining log, not a pkl. Edit `scripts/plot_figure5.py`:
+
+```python
+ALPHAAGENT_OURS = {
+    "rounds": [1, 2, 3, 4, 5],
+    "ic":     [0.016417, 0.016563, 0.016563, 0.016563, 0.016563],
+}
+
+# To add an EliteAlpha line (mean ± std across trials):
+ELITEALPHA_OURS = {
+    "rounds":  [1, 2, 3, 4, 5],
+    "ic_mean": [0.012, 0.014, 0.016, 0.018, 0.020],
+    "ic_std":  [0.001, 0.002, 0.003, 0.004, 0.005],
+}
+```
+
+Per-round IC for the AlphaAgent run is grep'able from its log:
+
+```bash
+grep -A1 "factor_expression:" AlphaAgent/run_logs/alphaagent_table2.log | head
+grep "^IC " AlphaAgent/run_logs/alphaagent_table2.log
+```
+
+Run:
+
+```bash
+python scripts/plot_figure5.py   # → figures/figure5_csi500.{pdf,png}
+```
