@@ -34,7 +34,7 @@ METHOD_PKLS: dict[str, Path] = {
     "LSTM":       _PKL_DIR / "lstm.pkl",
     "Transformer": _PKL_DIR / "transformer.pkl",
     "AlphaAgent": _PKL_DIR / "alphaagent.pkl",
-    "EliteAlpha": REPO / "baselines/direct_factor_backtests/EliteAlpha_v2_report_normal_1day.pkl",
+    "EliteAlpha": REPO / "baselines/direct_factor_backtests/EliteAlpha_v3_report_normal_1day.pkl",
 }
 
 # Color + linewidth per method (论文里 AlphaAgent / EliteAlpha 用粗实线突出).

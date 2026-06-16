@@ -83,7 +83,7 @@ LSTM (Alpha158)        & 0.0164              & 0.131  & \underline{10.61\%}& \te
 Transformer (Alpha158) & \textbf{0.0173}     & \underline{0.135} & 6.45\%  & 0.73           & -19.63\%            \\
 AlphaAgent\,$^\dagger$ & 0.0164              & \textbf{0.164}    & 8.52\%  & 1.20           & \underline{-13.46\%}\\
 \midrule
-\prjname{} (ours)      & \alert{TBD}         & \alert{TBD}        & \alert{TBD} & \alert{TBD} & \alert{TBD}     \\
+\prjname{} (ours)      & \alert{0.0084}      & \alert{0.072}      & \alert{\textbf{15.69\%}} & \alert{\textbf{1.46}} & \alert{-13.16\%}\\
 \bottomrule
 \end{tabular}
 
@@ -99,8 +99,9 @@ not its LLM factor's contribution (see previous slide).
 \centering
 \includegraphics[width=0.95\linewidth]{assets/figure3_csi500.pdf}
 \caption{Cumulative excess return over CSI 500 benchmark.
-LSTM with Alpha158 attains the highest terminal excess.
-\alert{\prjname{}'s curve to be added after final mining run.}}
+\alert{\prjname{} (black) achieves +75.3\% terminal cum.\ excess},
+beating the strongest model baseline (LSTM, +54\%) by $\sim$20 pp
+while using only a single hand-mined factor expression.}
 \end{figure}
 \end{frame}
 
@@ -182,8 +183,10 @@ cross-sectional   & .       & .            & $\checkmark$ & $\checkmark$ & $\che
           settles on a single ``cumulative\,return / volatility'' attractor
     \item \textbf{Quality--Diversity} -- \prjname{}'s archive covers
           \alert{13} distinct factor families vs.\ AlphaAgent's \alert{1}
-    \item \textbf{Performance} -- \prjname{} achieves \alert{TBD}\,\% AR,
-          \alert{TBD} IR on CSI 500 (5-year test), competitive with the
-          strongest model baselines while requiring no model training
+    \item \textbf{Performance} -- \prjname{} achieves
+          \alert{\textbf{15.69\%}} AR and \alert{\textbf{1.46}} IR on CSI 500
+          (5-year test), \alert{beating LSTM (+10.6\%, IR 1.36) -- the
+          strongest model baseline} -- with a single hand-mined factor
+          and no model training
 \end{enumerate}
 \end{frame}
