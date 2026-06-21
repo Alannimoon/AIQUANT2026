@@ -33,8 +33,12 @@ METHOD_PKLS: dict[str, Path] = {
     "LightGBM":   _PKL_DIR / "lightgbm.pkl",
     "LSTM":       _PKL_DIR / "lstm.pkl",
     "Transformer": _PKL_DIR / "transformer.pkl",
-    "AlphaAgent": _PKL_DIR / "alphaagent.pkl",
-    "EliteAlpha": REPO / "baselines/direct_factor_backtests/EliteAlpha_v4_report_normal_1day.pkl",
+    # ── unified evaluation: both LLM methods use the SOTA factor expression
+    #    directly as the trading signal (no LightGBM wrapper).
+    #    AlphaAgent factor: Loop 0 SOTA `ZSCORE(TS_SUM($return, 5))`
+    #    EliteAlpha factor: v5 validation-best `-1 * (ZSCORE(($high-$low)/$close*$volume))`
+    "AlphaAgent": REPO / "baselines/direct_factor_backtests/AlphaAgent_loop0_direct_report_normal_1day.pkl",
+    "EliteAlpha": REPO / "baselines/direct_factor_backtests/EliteAlpha_v5_report_normal_1day.pkl",
 }
 
 # Color + linewidth per method (论文里 AlphaAgent / EliteAlpha 用粗实线突出).
