@@ -84,7 +84,7 @@ LSTM (Alpha158)        & 0.0164          & \textbf{0.0420}       & 0.131        
 Transformer (Alpha158) & \textbf{0.0173} & \underline{0.0404}    & \underline{0.135} & \underline{0.317} & 6.45\%               & 0.73           & -19.63\%            \\
 AlphaAgent\,$^\dagger$ & 0.0164          & 0.0085                & \textbf{0.164}  & 0.084           & 8.52\%                 & 1.20           & \underline{-13.46\%}\\
 \midrule
-\prjname{} (ours)      & \alert{0.0084}  & \alert{0.0322}        & \alert{0.066}   & \alert{0.217}   & \alert{\textbf{15.69\%}} & \alert{\textbf{1.46}} & \alert{-13.16\%}\\
+\prjname{} (ours)      & \alert{0.0097}  & \alert{0.0234}        & \alert{0.088}   & \alert{0.211}   & \alert{\textbf{24.05\%}} & \alert{\textbf{2.29}} & \alert{\textbf{-9.95\%}}\\
 \bottomrule
 \end{tabular}
 
@@ -105,9 +105,9 @@ is competitive} and its \textbf{portfolio metrics (AR, IR) are the strongest}.
 \centering
 \includegraphics[width=0.95\linewidth]{assets/figure3_csi500.pdf}
 \caption{Cumulative excess return over CSI 500 benchmark.
-\alert{\prjname{} (black) achieves +75.3\% terminal cum.\ excess},
-beating the strongest model baseline (LSTM, +54\%) by $\sim$20 pp
-while using only a single hand-mined factor expression.}
+\alert{\prjname{} (black) achieves +115.5\% terminal cum.\ excess},
+beating the strongest model baseline (LSTM, +54\%) by $\sim$61 pp
+while using only a single mined factor expression (no model training).}
 \end{figure}
 \end{frame}
 
@@ -154,12 +154,13 @@ coverage of $5{\times}5$ category--depth cells.
 %---------------------------------------------------------
 \begin{frame}{\prjname{} Archive Coverage}
 \begin{itemize}
-    \item After 92 mining rounds, \prjname{} fills
-          \textbf{13 / 25} cells of the
+    \item After \textbf{138} mining rounds, \prjname{} fills
+          \textbf{22 / 25} cells of the
           \emph{(category $\times$ AST depth)} matrix
-    \item Categories explored: momentum, reversal, volume--price, cross-sectional
+    \item \textbf{All 5} categories explored: momentum, reversal,
+          volatility, volume--price, cross-sectional
     \item AlphaAgent stays in \textbf{1} cell after 5 rounds; \prjname{}
-          reaches 13 $\Rightarrow$ \alert{13$\times$ broader exploration}
+          reaches 22 $\Rightarrow$ \alert{22$\times$ broader exploration}
 \end{itemize}
 
 \medskip
@@ -170,11 +171,11 @@ coverage of $5{\times}5$ category--depth cells.
 \toprule
                   & depth 1 & depth 2 & depth 3 & depth 4 & depth 5 \\
 \midrule
-momentum          & .       & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
-reversal          & .       & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
-volatility        & .       & .            & .            & .            & .            \\
-volume--price     & .       & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
-cross-sectional   & .       & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+momentum          & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+reversal          & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+volatility        & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+volume--price     & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+cross-sectional   & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
 \bottomrule
 \end{tabular}
 \end{frame}
@@ -188,11 +189,13 @@ cross-sectional   & .       & .            & $\checkmark$ & $\checkmark$ & $\che
     \item \textbf{Attractor collapse} -- without proper feedback, LLM mining
           settles on a single ``cumulative\,return / volatility'' attractor
     \item \textbf{Quality--Diversity} -- \prjname{}'s archive covers
-          \alert{13} distinct factor families vs.\ AlphaAgent's \alert{1}
+          \alert{22 / 25 cells} across all 5 categories vs.\ AlphaAgent's
+          \alert{1}
     \item \textbf{Performance} -- \prjname{} achieves
-          \alert{\textbf{15.69\%}} AR and \alert{\textbf{1.46}} IR on CSI 500
-          (5-year test), \alert{beating LSTM (+10.6\%, IR 1.36) -- the
-          strongest model baseline} -- with a single hand-mined factor
-          and no model training
+          \alert{\textbf{24.05\%}} AR, \alert{\textbf{2.29}} IR, and
+          \alert{\textbf{-9.95\%}} MDD on CSI 500 (5-year test),
+          \alert{beating LSTM (+10.6\%, IR 1.36) -- the strongest
+          model baseline -- by $>$2$\times$} with a single mined
+          factor and no model training
 \end{enumerate}
 \end{frame}
