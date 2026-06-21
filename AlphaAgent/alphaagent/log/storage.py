@@ -64,6 +64,19 @@ class FileStorage(Storage):
         r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL) *\| "
         r"(?P<caller>.+:.+:\d+) - "
     )
+    logged_object_pattern = re.compile(r"Logging object in (?P<path>[^\r\n]+)")
+    ansi_escape_pattern = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+    @classmethod
+    def _extract_logged_object_path(cls, message: str) -> Path | None:
+        match = cls.logged_object_pattern.search(message)
+        if match is None:
+            return None
+
+        path = cls.ansi_escape_pattern.sub("", match.group("path")).strip()
+        if not path:
+            return None
+        return Path(path)
 
     def iter_msg(self, watch: bool = False) -> Generator[Message, None, None]:
         msg_l = []
@@ -138,9 +151,12 @@ class FileStorage(Storage):
 
                 if timestamp > time:
                     if "Logging object in" in msg:
-                        absolute_p = msg.split("Logging object in ")[1]
-                        p = Path(absolute_p)
-                        p.unlink()
+                        p = self._extract_logged_object_path(msg)
+                        if p is not None:
+                            try:
+                                p.unlink(missing_ok=True)
+                            except OSError:
+                                pass
                     continue
 
                 new_content += content[log_start:log_end]

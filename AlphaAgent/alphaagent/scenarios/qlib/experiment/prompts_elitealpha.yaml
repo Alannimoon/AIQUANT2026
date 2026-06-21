@@ -3,8 +3,12 @@ qlib_elitealpha_background: |-
   The goal is not only to improve the latest best factor, but also to build a diverse archive of strong factors across behavior cells.
   Each behavior cell is defined by:
   1. Factor category: momentum, reversal, volatility, volume-price, or cross-sectional.
-  2. AST depth bin: the structural complexity bucket of the factor expression.
-  Every proposed factor should be designed for the current search plan: initialize an empty cell, mutate a parent elite, or crossover two parent elites.
+  2. AST depth bin: the structural complexity bucket of the factor expression, using depth bins 1, 2, 3, 4, and 5.
+  Archive quality is measured by Rank IC, not ordinary Pearson IC.
+  Every factor expression must keep AST depth <= 5.
+  Do not add a leading negative sign only to choose the predictive direction; the runner will sign-adjust factors after measuring train Rank IC.
+  Factor values do not need to cross zero; only their cross-sectional ordering matters for Rank IC and Top-K selection, so avoid redundant centering like subtracting 1 from a ratio when it does not change the ordering.
+  Every proposed factor should be designed for the current search plan: initialize an empty cell, mutate a parent elite, crossover two parent elites, or creatively innovate from sanitized natural-language feedback without seeing any existing factor expression.
   Prefer factors that are novel relative to the archive, interpretable, parsable by the expression grammar, and likely to improve quality inside the targeted cell.
   Do not copy parent expressions directly. Preserve useful economic intuition while changing the expression structure enough to expand archive diversity.
 
@@ -13,6 +17,7 @@ qlib_elitealpha_strategy: |-
   When the target cell is empty, prioritize a clean and testable factor that fills the requested category and complexity bucket.
   When mutating an elite, retain the broad behavioral idea but vary windows, transformations, normalizations, and variable interactions.
   When crossing over elites, combine complementary ideas without directly embedding either parent expression.
+  When creatively innovating, rely on sanitized feedback patterns and archive cell quality/occupancy only; spread multiple candidates across plausible categories and depth bins.
   Balance quality and diversity: a slightly different expression that occupies or improves a weak cell can be more valuable than another near-duplicate of the current best factor.
 
 qlib_elitealpha_rich_style_description: |-
@@ -24,7 +29,7 @@ qlib_elitealpha_rich_style_description: |-
 
   #### Automated R&D
 
-  - Research: Generate archive-aware hypotheses for initialization, mutation, and crossover.
+  - Research: Generate archive-aware hypotheses for initialization, mutation, crossover, and creative innovation from sanitized feedback.
   - Development: Convert hypotheses into parsable factor expressions and evaluate them through Qlib.
   - Archive Update: Place each evaluated factor into a category and AST-depth cell, replacing the incumbent only when quality improves.
 
@@ -35,4 +40,4 @@ qlib_elitealpha_rich_style_description: |-
 qlib_elitealpha_experiment_setting: |-
   | Dataset | Model | Search | Archive Cells | Data Split |
   |---------|-------|--------|---------------|------------|
-  | CSI300 | LGBModel | MAP-Elites factor mining | 5 categories x 5 AST-depth bins | Train: 2012-01-01 to 2018-12-31 <br> Valid: 2019-01-01 to 2020-12-31 <br> Test: 2021-01-01 to 2024-12-01 |
+  | CSI300 | LGBModel | MAP-Elites factor mining | 5 categories x 5 AST-depth bins (1-5), quality=Rank IC | Train: 2012-01-01 to 2018-12-31 <br> Valid: 2019-01-01 to 2020-12-31 <br> Test: 2021-01-01 to 2024-12-01 |

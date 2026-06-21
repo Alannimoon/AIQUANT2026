@@ -1,5 +1,6 @@
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any, List, Tuple
 
@@ -20,13 +21,50 @@ from alphaagent.core.proposal import Hypothesis, Trace
 from alphaagent.core.scenario import Scenario
 from alphaagent.log import logger
 from alphaagent.oai.llm_utils import APIBackend
-from alphaagent.scenarios.qlib.archive import EliteArchive
+from alphaagent.scenarios.qlib.archive import DEFAULT_QUALITY_METRIC, EliteArchive
 from alphaagent.scenarios.qlib.experiment.factor_experiment import QlibFactorExperiment
 from alphaagent.scenarios.qlib.proposal.factor_proposal import AlphaAgentHypothesis
 from alphaagent.scenarios.qlib.regulator.factor_regulator import FactorRegulator
 
 
 alphaagent_prompt_dict = Prompts(file_path=Path(__file__).parent.parent / "prompts_alphaagent.yaml")
+ELITE_ALPHA_MAX_AST_DEPTH = 5
+ELITE_ALPHA_CREATIVE_INNOVATION_PROBABILITY = 0.15
+ELITE_ALPHA_CANDIDATE_COUNT = 5
+ELITE_ALPHA_CREATIVE_FEEDBACK_HISTORY_LIMIT = 20
+ELITE_ALPHA_FEEDBACK_FIELD_MAX_CHARS = 700
+
+
+def _single_line_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False)
+    return " ".join(text.split())
+
+
+def _select_hypothesis_response(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, dict) and "hypothesis" in payload:
+        return payload
+
+    candidates = None
+    if isinstance(payload, dict):
+        candidates = payload.get("candidates")
+    elif isinstance(payload, list):
+        candidates = payload
+
+    if isinstance(candidates, list):
+        for candidate in candidates:
+            if isinstance(candidate, dict) and candidate.get("hypothesis"):
+                logger.warning(
+                    "EliteAlpha hypothesis response contained a candidates list; "
+                    "using the first candidate with `hypothesis`."
+                )
+                return candidate
+
+    return payload
 
 
 class EliteAlphaHypothesis(AlphaAgentHypothesis):
@@ -51,7 +89,7 @@ class EliteAlphaHypothesis(AlphaAgentHypothesis):
     def __str__(self) -> str:
         base = super().__str__()
         return f"""{base}
-                EliteAlpha Search Plan: {self.elite_search_plan}
+                EliteAlpha Search Plan: {_sanitize_search_plan_for_prompt(self.elite_search_plan)}
                 """
 
 
@@ -69,7 +107,7 @@ class EliteAlphaHypothesisGen(FactorHypothesisGen):
         context_parts = [
             _format_archive_context(archive),
             _format_search_plan(search_plan),
-            _format_recent_history(trace),
+            _format_history_for_search_plan(trace, search_plan),
         ]
 
         if len(trace.hist) == 0 and self.potential_direction is not None:
@@ -93,13 +131,31 @@ class EliteAlphaHypothesisGen(FactorHypothesisGen):
         return context_dict, True
 
     def convert_response(self, response: str) -> EliteAlphaHypothesis:
-        response_dict = json.loads(response)
+        response_dict = _select_hypothesis_response(json.loads(response))
+        if not isinstance(response_dict, dict):
+            raise ValueError(f"EliteAlpha hypothesis response must be a JSON object, got {type(response_dict).__name__}.")
+
+        hypothesis = response_dict.get("hypothesis")
+        if not hypothesis:
+            raise ValueError(
+                "EliteAlpha hypothesis response is missing `hypothesis`; "
+                f"available keys={list(response_dict.keys())}."
+            )
+
         return EliteAlphaHypothesis(
-            hypothesis=response_dict["hypothesis"],
-            concise_observation=response_dict["concise_observation"],
-            concise_knowledge=response_dict["concise_knowledge"],
-            concise_justification=response_dict["concise_justification"],
-            concise_specification=response_dict["concise_specification"],
+            hypothesis=_single_line_text(hypothesis),
+            concise_observation=_single_line_text(
+                response_dict.get("concise_observation") or response_dict.get("observation") or ""
+            ),
+            concise_knowledge=_single_line_text(
+                response_dict.get("concise_knowledge") or response_dict.get("knowledge") or ""
+            ),
+            concise_justification=_single_line_text(
+                response_dict.get("concise_justification") or response_dict.get("justification") or ""
+            ),
+            concise_specification=_single_line_text(
+                response_dict.get("concise_specification") or response_dict.get("specification") or ""
+            ),
             elite_search_plan=self._last_search_plan,
         )
 
@@ -133,7 +189,7 @@ class EliteAlphaHypothesisGen(FactorHypothesisGen):
 class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.factor_regulator = FactorRegulator()
+        self.factor_regulator = FactorRegulator(depth_cap=ELITE_ALPHA_MAX_AST_DEPTH)
         self.max_regeneration_attempts = 10
 
     def prepare_context(self, hypothesis: Hypothesis, trace: Trace) -> Tuple[dict, bool]:
@@ -151,7 +207,7 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
             [
                 _format_archive_context(archive),
                 _format_search_plan(search_plan),
-                _format_recent_history(trace),
+                _format_history_for_search_plan(trace, search_plan),
                 _format_archive_targets(archive),
             ]
         )
@@ -162,7 +218,7 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
             "hypothesis_and_feedback": hypothesis_and_feedback,
             "function_lib_description": function_lib_description,
             "experiment_output_format": experiment_output_format,
-            "target_list": _collect_archive_and_history_tasks(trace),
+            "target_list": [],
             "RAG": None,
             "search_plan": search_plan,
         }, True
@@ -184,7 +240,7 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
 
         response = None
         accepted_response_dict = {}
-        expression_duplication_prompt = None
+        expression_rejection_prompt = None
 
         for attempt_idx in range(self.max_regeneration_attempts):
             response = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
@@ -193,6 +249,7 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
 
             for factor_name, factor_info in response_dict.items():
                 expr = factor_info["expression"]
+                expr_for_evaluation = _expression_without_leading_sign(expr)
                 factor_category = _resolve_category(
                     archive,
                     factor_info.get("category"),
@@ -203,11 +260,14 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
                     expr,
                 )
 
-                if not self.factor_regulator.is_parsable(expr):
+                if not self.factor_regulator.is_parsable(expr_for_evaluation):
                     logger.info(f"Skip unparsable EliteAlpha expr from {factor_name}: {expr}")
                     continue
 
-                success, eval_dict = self.factor_regulator.evaluate(expr, factor_category=factor_category)
+                success, eval_dict = self.factor_regulator.evaluate(
+                    expr_for_evaluation,
+                    factor_category=factor_category,
+                )
                 if not success:
                     logger.info(f"Skip unevaluable EliteAlpha expr from {factor_name}: {expr}")
                     continue
@@ -217,12 +277,14 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
                         "Skip unacceptable EliteAlpha expr from "
                         f"{factor_name}: {expr}; eval={eval_dict}"
                     )
-                    expression_duplication_prompt = _append_duplication_feedback(
-                        expression_duplication_prompt,
+                    expression_rejection_prompt = _append_expression_rejection_feedback(
+                        expression_rejection_prompt,
                         expr,
                         eval_dict,
+                        duplication_threshold=self.factor_regulator.duplication_threshold,
+                        depth_cap=self.factor_regulator.depth_cap,
                     )
-                    context["expression_duplication"] = expression_duplication_prompt
+                    context["expression_rejection"] = expression_rejection_prompt
                     continue
 
                 attempt_accepted[factor_name] = factor_info
@@ -235,7 +297,7 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 f"No acceptable EliteAlpha factor expressions in attempt "
                 f"{attempt_idx + 1}/{self.max_regeneration_attempts}; retrying..."
             )
-            if expression_duplication_prompt is not None:
+            if expression_rejection_prompt is not None:
                 user_prompt = self._render_user_prompt(context)
 
         if not accepted_response_dict:
@@ -269,7 +331,7 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 function_lib_description=context["function_lib_description"],
                 target_list=context["target_list"],
                 RAG=context["RAG"],
-                expression_duplication=context.get("expression_duplication"),
+                expression_rejection=context.get("expression_rejection"),
             )
         )
 
@@ -334,6 +396,8 @@ class EliteAlphaHypothesis2FactorExpression(FactorHypothesis2Experiment):
 
         exp = QlibFactorExperiment(unique_tasks)
         exp.based_experiments = based_experiments
+        exp.is_elitealpha = True
+        exp.skip_sota_factor_merge = True
         return exp
 
 
@@ -349,80 +413,358 @@ def _build_elite_search_plan(
     trace: Trace,
     potential_direction: str | None,
 ) -> dict[str, Any]:
-    if len(archive) == 0:
-        category = archive.categories[len(trace.hist) % len(archive.categories)]
-        depth_bin = archive.depth_bins[len(trace.hist) % len(archive.depth_bins)]
-        return {
-            "mode": "initialize",
-            "target_category": category,
-            "target_depth_bin": depth_bin,
-            "target_complexity_bin": depth_bin,
-            "target_complexity_metric": archive.complexity_metric,
-            "parents": [],
-            "instruction": "Seed an empty MAP-Elites archive with a diverse, testable factor.",
-            "potential_direction": potential_direction,
-        }
+    empty_cells = _archive_empty_cells(archive)
+    mode_probabilities = _elite_mode_probabilities(
+        archive,
+        empty_cells,
+        has_feedback=len(trace.hist) > 0,
+    )
+    mode = _sample_from_distribution(mode_probabilities)
 
-    if len(archive) >= 2 and random.random() < 0.3:
+    if mode == "creative_innovation":
+        return _make_elite_search_plan(
+            archive=archive,
+            mode=mode,
+            target_category=None,
+            target_depth_bin=None,
+            parents=[],
+            instruction=(
+                "Generate fully new factors from sanitized natural-language feedback only. "
+                "Do not use, request, infer, or reconstruct any existing factor expression. "
+                f"Return exactly {ELITE_ALPHA_CANDIDATE_COUNT} diverse candidates spread across any categories "
+                "and AST depths up to the hard cap."
+            ),
+            potential_direction=potential_direction,
+            mode_probabilities=mode_probabilities,
+            empty_cell_count=len(empty_cells),
+            target_candidate_count=ELITE_ALPHA_CANDIDATE_COUNT,
+        )
+
+    if mode == "initialize_empty_cell":
+        category, depth_bin = _sample_empty_cell(archive, trace, empty_cells)
+        return _make_elite_search_plan(
+            archive=archive,
+            mode=mode,
+            target_category=category,
+            target_depth_bin=depth_bin,
+            parents=[],
+            instruction=(
+                "Initialize the requested MAP-Elites cell with a diverse, testable factor. "
+                "Use only the archive occupancy and quality signals provided in the prompt."
+            ),
+            potential_direction=potential_direction,
+            mode_probabilities=mode_probabilities,
+            empty_cell_count=len(empty_cells),
+            target_candidate_count=ELITE_ALPHA_CANDIDATE_COUNT,
+        )
+
+    if mode == "crossover":
         left, right = archive.sample_pair(weighted=True)
         target_category = left.category if random.random() < 0.5 else right.category
         target_depth_bin = random.choice((left.depth_bin, right.depth_bin))
-        return {
-            "mode": "crossover",
-            "target_category": target_category,
-            "target_depth_bin": target_depth_bin,
-            "target_complexity_bin": target_depth_bin,
-            "target_complexity_metric": archive.complexity_metric,
-            "parents": [left.to_dict(), right.to_dict()],
-            "instruction": "Combine useful ideas from the two parent elites without copying either expression.",
-            "potential_direction": potential_direction,
-        }
+        return _make_elite_search_plan(
+            archive=archive,
+            mode=mode,
+            target_category=target_category,
+            target_depth_bin=target_depth_bin,
+            parents=[
+                _sanitize_elite_record_for_prompt(left, include_expression=True),
+                _sanitize_elite_record_for_prompt(right, include_expression=True),
+            ],
+            instruction=(
+                "Generate a candidate for the requested cell using only the provided parent expressions, "
+                "parent cells, and quality scores. Do not use or infer any other archive expressions."
+            ),
+            potential_direction=potential_direction,
+            mode_probabilities=mode_probabilities,
+            empty_cell_count=len(empty_cells),
+            target_candidate_count=ELITE_ALPHA_CANDIDATE_COUNT,
+        )
 
     parent = archive.sample_parent(weighted=True)
+    return _make_elite_search_plan(
+        archive=archive,
+        mode="mutation",
+        target_category=parent.category,
+        target_depth_bin=parent.depth_bin,
+        parents=[_sanitize_elite_record_for_prompt(parent, include_expression=True)],
+        instruction=(
+            "Generate a mutation candidate using only the provided parent expression, parent cell, "
+            "and quality score. Do not use or infer any other archive expressions."
+        ),
+        potential_direction=potential_direction,
+        mode_probabilities=mode_probabilities,
+        empty_cell_count=len(empty_cells),
+        target_candidate_count=ELITE_ALPHA_CANDIDATE_COUNT,
+    )
+
+
+def _make_elite_search_plan(
+    *,
+    archive: EliteArchive,
+    mode: str,
+    target_category: str | None,
+    target_depth_bin: int | None,
+    parents: list[dict[str, Any]],
+    instruction: str,
+    potential_direction: str | None,
+    mode_probabilities: dict[str, float],
+    empty_cell_count: int,
+    target_candidate_count: int | None = None,
+) -> dict[str, Any]:
     return {
-        "mode": "mutation",
-        "target_category": parent.category,
-        "target_depth_bin": parent.depth_bin,
-        "target_complexity_bin": parent.depth_bin,
+        "mode": mode,
+        "mode_probabilities": _round_probabilities(mode_probabilities),
+        "archive_coverage": archive.coverage(),
+        "empty_cell_count": empty_cell_count,
+        "target_category": target_category,
+        "target_depth_bin": target_depth_bin,
+        "target_complexity_bin": target_depth_bin,
         "target_complexity_metric": archive.complexity_metric,
-        "parents": [parent.to_dict()],
-        "instruction": "Mutate the parent elite while preserving its broad behavioral intent and improving originality.",
+        "parents": parents,
+        "instruction": instruction,
         "potential_direction": potential_direction,
+        "target_candidate_count": target_candidate_count,
     }
+
+
+def _archive_empty_cells(archive: EliteArchive) -> list[tuple[str, int]]:
+    occupied = {(descriptor.category, int(descriptor.depth_bin)) for descriptor in archive.occupied_descriptors()}
+    return [
+        (category, int(depth_bin))
+        for category in archive.categories
+        for depth_bin in archive.depth_bins
+        if (category, int(depth_bin)) not in occupied
+    ]
+
+
+def _elite_mode_probabilities(
+    archive: EliteArchive,
+    empty_cells: list[tuple[str, int]],
+    *,
+    has_feedback: bool = False,
+) -> dict[str, float]:
+    if len(archive) == 0:
+        return _normalize_probabilities(
+            {
+                "initialize_empty_cell": 0.75 if empty_cells else 0.0,
+                "creative_innovation": 0.25 if has_feedback else 0.0,
+                "mutation": 0.0,
+                "crossover": 0.0,
+            },
+            fallback_mode="initialize_empty_cell",
+        )
+
+    coverage = archive.coverage()
+    creative_innovation = ELITE_ALPHA_CREATIVE_INNOVATION_PROBABILITY if has_feedback else 0.0
+    probabilities = {
+        "initialize_empty_cell": 0.60 * (1.0 - coverage) if empty_cells else 0.0,
+        "creative_innovation": creative_innovation,
+        "mutation": 0.0,
+        "crossover": 0.10 + 0.25 * coverage if len(archive) >= 2 else 0.0,
+    }
+    probabilities["mutation"] = max(
+        0.0,
+        1.0
+        - probabilities["initialize_empty_cell"]
+        - probabilities["creative_innovation"]
+        - probabilities["crossover"],
+    )
+    return _normalize_probabilities(probabilities, fallback_mode="mutation")
+
+
+def _normalize_probabilities(probabilities: dict[str, float], fallback_mode: str) -> dict[str, float]:
+    clipped = {mode: max(0.0, float(probability)) for mode, probability in probabilities.items()}
+    total = sum(clipped.values())
+    if total <= 0:
+        return {mode: 1.0 if mode == fallback_mode else 0.0 for mode in clipped}
+    return {mode: probability / total for mode, probability in clipped.items()}
+
+
+def _round_probabilities(probabilities: dict[str, float]) -> dict[str, float]:
+    return {mode: round(probability, 4) for mode, probability in probabilities.items()}
+
+
+def _sample_from_distribution(probabilities: dict[str, float]) -> str:
+    threshold = random.random()
+    cumulative = 0.0
+    last_mode = next(iter(probabilities))
+    for mode, probability in probabilities.items():
+        if probability <= 0:
+            continue
+        last_mode = mode
+        cumulative += probability
+        if threshold < cumulative:
+            return mode
+    return last_mode
+
+
+def _sample_empty_cell(
+    archive: EliteArchive,
+    trace: Trace,
+    empty_cells: list[tuple[str, int]],
+) -> tuple[str, int]:
+    if not empty_cells:
+        raise ValueError("Cannot initialize an empty cell because the archive has full coverage.")
+
+    if len(archive) == 0:
+        return empty_cells[len(trace.hist) % len(empty_cells)]
+
+    occupied_category_counts = {category: 0 for category in archive.categories}
+    occupied_bin_counts = {int(depth_bin): 0 for depth_bin in archive.depth_bins}
+    for descriptor in archive.occupied_descriptors():
+        occupied_category_counts[descriptor.category] = occupied_category_counts.get(descriptor.category, 0) + 1
+        occupied_bin_counts[int(descriptor.depth_bin)] = occupied_bin_counts.get(int(descriptor.depth_bin), 0) + 1
+
+    weights = [
+        1.0
+        / ((1 + occupied_category_counts.get(category, 0)) * (1 + occupied_bin_counts.get(int(depth_bin), 0)))
+        for category, depth_bin in empty_cells
+    ]
+    return random.choices(empty_cells, weights=weights, k=1)[0]
+
+
+def _format_archive_cell_states(archive: EliteArchive) -> str:
+    records = {
+        (record.category, int(record.depth_bin)): record
+        for record in archive.records()
+    }
+    lines = []
+    for category in archive.categories:
+        for depth_bin in archive.depth_bins:
+            key = (category, int(depth_bin))
+            record = records.get(key)
+            if record is None:
+                lines.append(f"  - cell=({category}, {depth_bin}), status=empty, quality_metric={DEFAULT_QUALITY_METRIC}, quality=N/A")
+            else:
+                lines.append(
+                    f"  - cell=({category}, {depth_bin}), status=full, "
+                    f"quality_metric={DEFAULT_QUALITY_METRIC}, quality={record.quality}"
+                )
+    return "\n".join(lines)
+
+
+def _sanitize_elite_record_for_prompt(record, *, include_expression: bool = False) -> dict[str, Any]:
+    sanitized = {
+        "category": record.category,
+        "depth_bin": record.depth_bin,
+        "factor_complexity_metric": record.factor_complexity_metric,
+        "factor_complexity_value": record.factor_complexity_value,
+        "quality_metric": DEFAULT_QUALITY_METRIC,
+        "quality": record.quality,
+    }
+    if include_expression:
+        sanitized["factor_expression"] = record.factor_expression
+    return sanitized
+
+
+def _sanitize_search_plan_for_prompt(search_plan: dict[str, Any]) -> dict[str, Any]:
+    sanitized = {
+        key: value
+        for key, value in search_plan.items()
+        if key != "parents"
+    }
+    sanitized_parents = []
+    for parent in search_plan.get("parents", []):
+        sanitized_parent = {
+            "category": parent.get("category"),
+            "depth_bin": parent.get("depth_bin"),
+            "factor_complexity_metric": parent.get("factor_complexity_metric"),
+            "factor_complexity_value": parent.get("factor_complexity_value"),
+            "quality_metric": parent.get("quality_metric", DEFAULT_QUALITY_METRIC),
+            "quality": parent.get("quality"),
+        }
+        if parent.get("factor_expression"):
+            sanitized_parent["factor_expression"] = parent.get("factor_expression")
+        sanitized_parents.append(sanitized_parent)
+    sanitized["parents"] = sanitized_parents
+    return sanitized
+
+
+def _format_hypothesis_for_prompt(hypothesis: Hypothesis) -> str:
+    lines = [
+        f"Hypothesis: {getattr(hypothesis, 'hypothesis', '')}",
+        f"Concise Observation: {getattr(hypothesis, 'concise_observation', '')}",
+        f"Concise Justification: {getattr(hypothesis, 'concise_justification', '')}",
+        f"Concise Knowledge: {getattr(hypothesis, 'concise_knowledge', '')}",
+    ]
+    concise_specification = getattr(hypothesis, "concise_specification", None)
+    if concise_specification is not None:
+        lines.append(f"Concise Specification: {concise_specification}")
+    return "\n  ".join(lines)
 
 
 def _format_archive_context(archive: EliteArchive) -> str:
     best = archive.best()
-    best_text = "None" if best is None else f"{best.factor_name}, quality={best.quality}, cell=({best.category}, {best.depth_bin})"
-    occupied = ", ".join(f"({d.category}, {d.depth_bin})" for d in archive.occupied_descriptors()) or "None"
+    best_text = "None" if best is None else f"quality={best.quality}, cell=({best.category}, {best.depth_bin})"
     return f"""EliteAlpha MAP-Elites archive:
 - Categories: {archive.categories}
 - Complexity metric: {archive.complexity_metric_desc()}
 - Complexity bins: {archive.depth_bins}
+- Quality metric: {DEFAULT_QUALITY_METRIC}
 - Coverage: {len(archive)}/{archive.total_cells} = {archive.coverage():.2%}
 - QD score: {archive.qd_score()}
 - Best elite: {best_text}
-- Occupied cells: {occupied}
+- Cell states:
+{_format_archive_cell_states(archive)}
 """
 
 
 def _format_search_plan(search_plan: dict[str, Any]) -> str:
     parents = search_plan.get("parents") or []
     parent_text = "\n".join(
-        f"- {p.get('factor_name')}: category={p.get('category')}, complexity_bin={p.get('depth_bin')}, "
-        f"metric={p.get('factor_complexity_metric')}, metric_value={p.get('factor_complexity_value')}, "
-        f"quality={p.get('quality')}, expression={p.get('factor_expression')}"
+        _format_search_plan_parent(p)
         for p in parents
     ) or "None"
+    target_candidate_count = search_plan.get("target_candidate_count")
+    target_candidate_count_text = (
+        f"- Target candidate count: exactly {target_candidate_count}\n"
+        if target_candidate_count
+        else ""
+    )
     return f"""Current EliteAlpha search plan:
 - Mode: {search_plan.get("mode")}
-- Target category: {search_plan.get("target_category")}
+- Mode probabilities: {_format_mode_probabilities(search_plan.get("mode_probabilities"))}
+- Archive coverage before selection: {_format_probability(search_plan.get("archive_coverage"))}
+- Empty cells before selection: {search_plan.get("empty_cell_count", "unknown")}
+- Target category: {search_plan.get("target_category") or "any"}
 - Target complexity metric: {search_plan.get("target_complexity_metric")}
-- Target complexity bin: {search_plan.get("target_complexity_bin", search_plan.get("target_depth_bin"))}
+- Target complexity bin: {search_plan.get("target_complexity_bin", search_plan.get("target_depth_bin")) or "any"}
+{target_candidate_count_text}- User direction: {search_plan.get("potential_direction") or "None"}
 - Instruction: {search_plan.get("instruction")}
 - Parent elites:
 {parent_text}
 """
+
+
+def _format_search_plan_parent(parent: dict[str, Any]) -> str:
+    text = (
+        f"- cell=({parent.get('category')}, {parent.get('depth_bin')}), "
+        f"metric={parent.get('factor_complexity_metric')}, "
+        f"metric_value={parent.get('factor_complexity_value')}, "
+        f"quality_metric={parent.get('quality_metric', DEFAULT_QUALITY_METRIC)}, "
+        f"quality={parent.get('quality')}"
+    )
+    expression = parent.get("factor_expression")
+    if expression:
+        text += f", expression={expression}"
+    return text
+
+
+def _format_mode_probabilities(probabilities: dict[str, float] | None) -> str:
+    if not probabilities:
+        return "unknown"
+    return ", ".join(
+        f"{mode}={_format_probability(probability)}"
+        for mode, probability in probabilities.items()
+    )
+
+
+def _format_probability(value) -> str:
+    try:
+        return f"{float(value):.1%}"
+    except (TypeError, ValueError):
+        return "unknown"
 
 
 def _format_recent_history(trace: Trace, limit: int = 5) -> str:
@@ -432,11 +774,12 @@ def _format_recent_history(trace: Trace, limit: int = 5) -> str:
     rows = []
     start = max(0, len(trace.hist) - limit)
     for idx, (hypothesis, experiment, feedback) in enumerate(trace.hist[-limit:], start=start):
-        factor_names = [task.factor_name for task in experiment.sub_tasks]
+        implemented = sum(1 for task in experiment.sub_tasks if getattr(task, "factor_implementation", False))
         rows.append(
             f"""Round {idx}:
-- Hypothesis: {hypothesis}
-- Factors: {factor_names}
+- Hypothesis: {_format_hypothesis_for_prompt(hypothesis)}
+- Candidate count: {len(experiment.sub_tasks)}
+- Implemented count: {implemented}
 - Result: {experiment.result}
 - Feedback observations: {feedback.observations}
 - Feedback decision: {feedback.decision}
@@ -446,17 +789,87 @@ def _format_recent_history(trace: Trace, limit: int = 5) -> str:
     return "Recent EliteAlpha trace history:\n" + "\n".join(rows)
 
 
+def _format_history_for_search_plan(trace: Trace, search_plan: dict[str, Any]) -> str:
+    if search_plan.get("mode") == "creative_innovation":
+        return _format_creative_feedback_history(trace)
+    return _format_recent_history(trace)
+
+
+def _format_creative_feedback_history(
+    trace: Trace,
+    limit: int = ELITE_ALPHA_CREATIVE_FEEDBACK_HISTORY_LIMIT,
+) -> str:
+    if len(trace.hist) == 0:
+        return (
+            "Creative innovation feedback memory:\n"
+            "- No previous natural-language feedback is available yet.\n"
+            "- Existing factor expressions are not provided."
+        )
+
+    start = max(0, len(trace.hist) - limit)
+    omitted = len(trace.hist) - start
+    rows = []
+    if start > 0:
+        rows.append(f"(Omitted {start} older rounds to keep the prompt compact.)")
+
+    for idx, (_, _experiment, feedback) in enumerate(trace.hist[-omitted:], start=start):
+        rows.append(
+            f"""Round {idx} sanitized natural-language feedback:
+- Observations: {_sanitize_feedback_text(getattr(feedback, "observations", ""))}
+- Hypothesis evaluation: {_sanitize_feedback_text(getattr(feedback, "hypothesis_evaluation", ""))}
+- New feedback / direction: {_sanitize_feedback_text(getattr(feedback, "new_hypothesis", ""))}
+- Reasoning: {_sanitize_feedback_text(getattr(feedback, "reason", ""))}
+- Decision: {getattr(feedback, "decision", None)}
+"""
+        )
+
+    return (
+        "Creative innovation feedback memory:\n"
+        "- Use this natural-language feedback only; no existing factor expressions are provided.\n"
+        "- Any expression-like fragments in historical feedback have been redacted.\n"
+        + "\n".join(rows)
+    )
+
+
+def _sanitize_feedback_text(value: Any) -> str:
+    text = "None" if value is None else str(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _redact_expression_like_text(text)
+    if len(text) > ELITE_ALPHA_FEEDBACK_FIELD_MAX_CHARS:
+        text = text[: ELITE_ALPHA_FEEDBACK_FIELD_MAX_CHARS - 3].rstrip() + "..."
+    return text or "None"
+
+
+def _redact_expression_like_text(text: str) -> str:
+    text = re.sub(
+        r"`[^`\n]*(?:\$[A-Za-z_][A-Za-z0-9_]*|[A-Z_]{2,}\s*\()[^`\n]*`",
+        "`<hidden_factor_expression>`",
+        text,
+    )
+    text = re.sub(
+        r"\b[A-Z_]{2,}\s*\([^;\n]{0,240}\)",
+        "<hidden_factor_expression>",
+        text,
+    )
+    text = re.sub(
+        r"\$[A-Za-z_][A-Za-z0-9_]*",
+        "<hidden_market_variable>",
+        text,
+    )
+    return text
+
+
 def _format_archive_targets(archive: EliteArchive) -> str:
     records = archive.to_records()
     if not records:
-        return "No elite factors exist yet. Avoid obvious textbook factors and fill the target cell first."
+        return "No elite factors exist yet. Fill the target cell using only the scenario, hypothesis, and archive occupancy signal."
     lines = [
-        f"- {record['factor_name']}: cell=({record['category']}, {record['depth_bin']}), "
+        f"- cell=({record['category']}, {record['depth_bin']}), status=full, "
         f"metric={record.get('factor_complexity_metric')}, metric_value={record.get('factor_complexity_value')}, "
-        f"quality={record['quality']}, expression={record['factor_expression']}"
+        f"quality_metric={record.get('quality_metric', DEFAULT_QUALITY_METRIC)}, quality={record['quality']}"
         for record in records
     ]
-    return "Existing elite factors to avoid directly duplicating:\n" + "\n".join(lines)
+    return "Existing archive occupancy and quality state:\n" + "\n".join(lines)
 
 
 def _collect_archive_and_history_tasks(trace: Trace) -> list[FactorTask]:
@@ -479,10 +892,11 @@ def _elite_hypothesis_specification(base_specification: str) -> str:
     return f"""{base_specification}
 
   4. **EliteAlpha MAP-Elites Exploration:**
-    - Use the provided archive context to decide whether to initialize, mutate, or crossover factors.
-    - Respect the target behavior cell: category and AST depth bin.
+    - Use the provided archive context to decide whether to initialize, mutate, crossover, or creatively innovate factors.
+    - Respect the target behavior cell when one is provided; in creative_innovation mode, deliberately spread candidates across any suitable categories and AST depth bins.
     - Prefer hypotheses that can fill empty cells or improve weak occupied cells.
     - Keep novelty relative to parent elites and recent rejected factors.
+    - In creative_innovation mode, use only sanitized natural-language feedback and archive cell state; do not infer or reconstruct hidden factor expressions.
 """
 
 
@@ -492,25 +906,107 @@ def _elite_experiment_output_format(base_output_format: str, archive: EliteArchi
   EliteAlpha extra requirements:
   - Each factor object MUST also include:
     "category": one of {archive.categories}
+  - If the current EliteAlpha search plan includes a target candidate count, output that many factor objects in this JSON response.
   - The expression should target the requested complexity bin when possible.
   - Current complexity metric: {archive.complexity_metric_desc()}.
+  - Hard constraint: AST depth must be <= {ELITE_ALPHA_MAX_AST_DEPTH}.
+  - Do not use a leading negative sign, "-1 * (...)", or "-(...)" only to choose the factor direction. Output the unsigned economic signal; the runner will flip the sign after measuring train Rank IC if needed.
+  - Leading sign is ignored when assigning archive complexity, so do not hide a good depth-{ELITE_ALPHA_MAX_AST_DEPTH} idea just because its profitable direction might be negative.
+  - Full archive factor expressions are intentionally hidden; when parent expressions are provided in the current search plan, use only those selected parent expressions plus archive cell occupancy and quality signals.
+  - In creative_innovation mode, no parent expression is provided; generate several fully new candidates using sanitized natural-language feedback only, and distribute them across any reasonable categories and AST depths.
+  - Do not output one-wrapper raw-variable factors such as RANK($open), RANK($return), ZSCORE($open), or ZSCORE($return).
+  - Prefer expressions with at least one transformation before cross-sectional ranking/standardization, e.g. combine two variables or use a time-series operator before RANK()/ZSCORE().
+  - Archive quality and portfolio selection are ranking-based; the factor does not need to be centered around zero. Avoid algebraically redundant shifts such as `(A / B) - 1` when `A / B` has the same stock ordering and uses less AST depth.
+  - If the target complexity bin is too shallow for a non-trivial expression, prioritize passing the acceptance rules over matching that bin exactly.
   - Do not output "ast_depth" unless you are confident; the code will calculate it from the expression.
 """
 
 
-def _append_duplication_feedback(previous: str | None, expression: str, eval_dict: dict[str, Any]) -> str:
-    feedback = (
-        Environment(undefined=StrictUndefined)
-        .from_string(alphaagent_prompt_dict["expression_duplication"])
-        .render(
-            prev_expression=expression,
-            duplicated_subtree_size=eval_dict["duplicated_subtree_size"],
-            duplicated_subtree=eval_dict["duplicated_subtree"],
-        )
+def _append_expression_rejection_feedback(
+    previous: str | None,
+    expression: str,
+    eval_dict: dict[str, Any],
+    *,
+    duplication_threshold: int,
+    depth_cap: float,
+) -> str:
+    feedback = _format_expression_rejection_feedback(
+        expression,
+        eval_dict,
+        duplication_threshold=duplication_threshold,
+        depth_cap=depth_cap,
     )
     if previous:
         return "\n\n".join([previous, feedback])
     return feedback
+
+
+def _format_expression_rejection_feedback(
+    expression: str,
+    eval_dict: dict[str, Any],
+    *,
+    duplication_threshold: int,
+    depth_cap: float,
+) -> str:
+    reasons = _expression_rejection_reasons(
+        eval_dict,
+        duplication_threshold=duplication_threshold,
+        depth_cap=depth_cap,
+    )
+    reason_text = "\n".join(f"  - {reason}" for reason in reasons)
+    duplicated_subtree = eval_dict.get("duplicated_subtree") or "None"
+    return f"""Rejected expression:
+- Proposed Expression: {expression}
+- Metrics: duplicated_subtree_size={eval_dict.get("duplicated_subtree_size")}, duplicated_subtree={duplicated_subtree}, free_args={eval_dict.get("num_free_args")}, unique_vars={eval_dict.get("num_unique_vars")}, total_nodes={eval_dict.get("num_all_nodes")}, ast_depth={eval_dict.get("ast_depth")}, category={eval_dict.get("factor_category")}
+- Rejection reasons:
+{reason_text}
+- Next attempt guidance:
+  - Do not retry one-wrapper raw-variable forms such as RANK($open), RANK($return), ZSCORE($open), or ZSCORE($return).
+  - Add structure: combine at least two market variables, or apply a time-series transform before cross-sectional ranking/standardization.
+  - Do not spend AST depth on redundant centering such as subtracting 1 from a positive ratio when the ratio itself preserves the same cross-sectional ordering.
+  - Keep the expression parseable, economically interpretable, and close to the target category/complexity cell.
+"""
+
+
+def _expression_rejection_reasons(
+    eval_dict: dict[str, Any],
+    *,
+    duplication_threshold: int,
+    depth_cap: float,
+) -> list[str]:
+    reasons = []
+    duplicated_size = eval_dict.get("duplicated_subtree_size", 0)
+    if duplicated_size > duplication_threshold:
+        reasons.append(
+            f"duplicated subtree size {duplicated_size} exceeds threshold {duplication_threshold}"
+        )
+
+    ast_depth = eval_dict.get("ast_depth", 0)
+    if depth_cap != float("inf") and ast_depth > depth_cap:
+        reasons.append(f"AST depth {ast_depth} exceeds cap {int(depth_cap)}")
+
+    num_all_nodes = eval_dict.get("num_all_nodes") or 0
+    if num_all_nodes <= 0:
+        reasons.append("expression has no valid AST nodes")
+        return reasons
+
+    num_free_args = eval_dict.get("num_free_args") or 0
+    num_unique_vars = eval_dict.get("num_unique_vars") or 0
+    free_args_ratio = float(num_free_args) / float(num_all_nodes)
+    unique_vars_ratio = float(num_unique_vars) / float(num_all_nodes)
+
+    if free_args_ratio >= 0.5:
+        reasons.append(
+            f"too many literal/free arguments relative to expression size: {free_args_ratio:.2f} >= 0.50"
+        )
+    if unique_vars_ratio >= 0.5:
+        reasons.append(
+            f"expression is too shallow/raw-variable-heavy: unique_vars/total_nodes={unique_vars_ratio:.2f} >= 0.50"
+        )
+
+    if not reasons:
+        reasons.append("failed the originality/complexity acceptance rules")
+    return reasons
 
 
 def _filter_duplicate_tasks(tasks: list[FactorTask], based_experiments: list[FactorExperiment]) -> list[FactorTask]:
@@ -580,8 +1076,9 @@ def _resolve_expression_complexity(
     expression: str,
     fallback_depth_bin: int | None,
 ) -> int:
+    expression_for_complexity = _expression_without_leading_sign(expression)
     if archive.complexity_metric == "vertex":
-        ast_node_count = _expression_ast_node_count(expression)
+        ast_node_count = _expression_ast_node_count(expression_for_complexity)
         if ast_node_count is not None:
             return ast_node_count
         return int(fallback_depth_bin) if fallback_depth_bin is not None else 1
@@ -592,10 +1089,27 @@ def _resolve_expression_complexity(
         except (TypeError, ValueError):
             pass
 
-    ast_depth = _expression_ast_depth(expression)
+    ast_depth = _expression_ast_depth(expression_for_complexity)
     if ast_depth is not None:
         return ast_depth
     return int(fallback_depth_bin) if fallback_depth_bin is not None else 1
+
+
+def _expression_without_leading_sign(expression: str) -> str:
+    expression = str(expression).strip()
+    if expression.startswith("-1 * (") and expression.endswith(")"):
+        return expression[len("-1 * (") : -1].strip()
+    if expression.startswith("-1*(") and expression.endswith(")"):
+        return expression[len("-1*(") : -1].strip()
+    if expression.startswith("-1 * "):
+        return expression[len("-1 * ") :].strip()
+    if expression.startswith("-1*"):
+        return expression[len("-1*") :].strip()
+    if expression.startswith("-(") and expression.endswith(")"):
+        return expression[2:-1].strip()
+    if expression.startswith("-"):
+        return expression[1:].strip()
+    return expression
 
 
 def _infer_category_from_text(*texts: str) -> str | None:

@@ -16,6 +16,7 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -34,8 +35,14 @@ METHOD_PKLS: dict[str, Path] = {
     "LSTM":       _PKL_DIR / "lstm.pkl",
     "Transformer": _PKL_DIR / "transformer.pkl",
     "AlphaAgent": _PKL_DIR / "alphaagent.pkl",
-    "EliteAlpha": REPO / "baselines/direct_factor_backtests/EliteAlpha_v2_report_normal_1day.pkl",
+#    "EliteAlpha":  REPO / "baselines/direct_factor_backtests/4p1.pkl",
+    "EliteAlpha-LGBM": REPO / "baselines/direct_factor_backtests/EliteAlpha_round60_LGBM_report_normal_1day.pkl",
 }
+
+ELITEALPHA_EXPR_FALLBACK = (
+    "( ($high - $low) / (TS_MEAN($high - $low, 20) + 1e-8) ) "
+    "* ( ($volume / (TS_MEDIAN($volume, 20) + 1e-8)) - 1 )"
+)
 
 # Color + linewidth per method (论文里 AlphaAgent / EliteAlpha 用粗实线突出).
 STYLE = {
@@ -47,6 +54,7 @@ STYLE = {
     "RD-Agent":    dict(color="#f781bf", linewidth=1.2, linestyle="--"),
     "AlphaAgent":  dict(color="#e41a1c", linewidth=2.0, linestyle="-"),
     "EliteAlpha":  dict(color="#000000", linewidth=2.5, linestyle="-"),
+    "EliteAlpha-LGBM":  dict(color="#000000", linewidth=2.5, linestyle="-"),
 }
 
 
@@ -59,6 +67,54 @@ def cumulative_excess(pkl_path: Path) -> pd.Series:
     df = pd.read_pickle(pkl_path)
     excess = df["return"] - df["bench"]
     return excess.cumsum()
+
+
+def escape_matplotlib_text(text: str) -> str:
+    return text.replace("$", r"\$")
+
+
+def metadata_path_for_report(pkl_path: Path) -> Path:
+    suffix = "_report_normal_1day.pkl"
+    if pkl_path.name.endswith(suffix):
+        return pkl_path.with_name(f"{pkl_path.name[:-len(suffix)]}_metadata.json")
+    return pkl_path.with_suffix(".json")
+
+
+def load_factor_expression(method: str) -> str | None:
+    pkl_path = METHOD_PKLS.get(method)
+    if pkl_path is None:
+        return None
+
+    meta_path = metadata_path_for_report(pkl_path)
+    if meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                expr = json.load(f).get("expression")
+            if expr:
+                return str(expr)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    if method == "EliteAlpha":
+        return ELITEALPHA_EXPR_FALLBACK
+    return None
+
+
+def add_elitealpha_expression(fig: plt.Figure) -> bool:
+    expr = load_factor_expression("EliteAlpha")
+    if not expr:
+        return False
+
+    fig.text(
+        0.01,
+        0.018,
+        escape_matplotlib_text(f"EliteAlpha factor expression: {expr}"),
+        ha="left",
+        va="bottom",
+        fontsize=6,
+        family="monospace",
+    )
+    return True
 
 
 def main() -> None:
@@ -85,7 +141,8 @@ def main() -> None:
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
     fig.autofmt_xdate(rotation=30)
 
-    fig.tight_layout()
+    has_expression = add_elitealpha_expression(fig)
+    fig.tight_layout(rect=(0, 0.08 if has_expression else 0, 1, 1))
     out_pdf = FIG_DIR / "figure3_csi500.pdf"
     out_png = FIG_DIR / "figure3_csi500.png"
     fig.savefig(out_pdf)

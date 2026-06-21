@@ -7,6 +7,7 @@ steps, but its trace owns a MAP-Elites archive that is updated after feedback.
 
 from functools import wraps
 from typing import Any
+import os
 import threading
 
 from alphaagent.components.workflow.conf import BaseFacSetting
@@ -25,12 +26,31 @@ from alphaagent.scenarios.qlib.archive import (
     DEFAULT_COMPLEXITY_METRIC,
     EliteArchive,
     format_archive_view,
+    rebuild_archive_from_trace_history,
     update_archive_from_experiment,
 )
 from alphaagent.utils.workflow import LoopBase, LoopMeta
 
 
 STOP_EVENT = None
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _archive_record_count(archive) -> int | str:
+    try:
+        return len(archive)
+    except Exception:
+        return "unknown"
+
+
+def _archive_is_usable(archive) -> bool:
+    return archive is not None and (hasattr(archive, "records") or hasattr(archive, "cells"))
 
 
 def stop_event_check(func):
@@ -106,6 +126,19 @@ class EliteAlphaLoop(LoopBase, metaclass=LoopMeta):
         instance.use_local = use_local
         if not hasattr(instance.trace, "archive"):
             raise TypeError("Loaded session is not an EliteAlpha session: trace has no archive.")
+        archive = getattr(instance.trace, "archive", None)
+        force_rebuild = _env_flag("ELITEALPHA_FORCE_REBUILD_ARCHIVE")
+        if force_rebuild or not _archive_is_usable(archive):
+            if not force_rebuild:
+                logger.warning("Checkpoint archive is missing or unusable; rebuilding from trace history.")
+            rebuild_archive_from_trace_history(instance.trace, log=logger)
+        else:
+            archive_size = _archive_record_count(archive)
+            logger.info(
+                "Skip EliteAlpha archive rebuild on resume; "
+                f"using checkpoint archive directly, records={archive_size}. "
+                "Set ELITEALPHA_FORCE_REBUILD_ARCHIVE=true to rebuild from trace history."
+            )
         logger.info(f"Load EliteAlphaLoop, use {'local' if use_local else 'Docker'} backtest")
         return instance
 
@@ -150,6 +183,8 @@ class EliteAlphaLoop(LoopBase, metaclass=LoopMeta):
         """
         with logger.tag("ef"):
             logger.info(f"Start factor backtest (Local: {self.use_local})")
+            if hasattr(self.trace, "archive"):
+                setattr(self.runner, "current_elite_archive", self.trace.archive)
             exp = self.runner.develop(prev_out["factor_calculate"], use_local=self.use_local)
             if exp is None:
                 logger.error("Factor extraction failed.")
@@ -171,5 +206,5 @@ class EliteAlphaLoop(LoopBase, metaclass=LoopMeta):
         update_archive_from_experiment(self.trace.archive, prev_out["factor_backtest"], log=logger)
         logger.log_object(self.trace.archive.to_records(), tag="elite archive")
         logger.log_object(self.trace.archive.history_records(), tag="elite archive history")
-        logger.info(format_archive_view(self.trace.archive), tag="elite archive view")
+        logger.log_object(format_archive_view(self.trace.archive), tag="elite archive view")
         self.trace.hist.append((prev_out["factor_propose"], prev_out["factor_backtest"], feedback))

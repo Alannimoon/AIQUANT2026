@@ -26,6 +26,25 @@ from alphaagent.oai.llm_conf import LLM_SETTINGS
 DEFAULT_QLIB_DOT_PATH = Path("./")
 
 
+def _resolve_model(explicit_model: str | None, default_model: str, *lightweight_candidates: str) -> str:
+    if explicit_model is not None:
+        return explicit_model
+    if LLM_SETTINGS.use_lightweight_llm:
+        for model in lightweight_candidates:
+            if model:
+                return model
+    return default_model
+
+
+def _resolve_chat_model_map() -> dict[str, str]:
+    if LLM_SETTINGS.use_lightweight_llm:
+        if LLM_SETTINGS.lightweight_chat_model_map:
+            return json.loads(LLM_SETTINGS.lightweight_chat_model_map)
+        if LLM_SETTINGS.lightweight_chat_model or LLM_SETTINGS.lightweight_model:
+            return {}
+    return json.loads(LLM_SETTINGS.chat_model_map)
+
+
 def md5_hash(input_string: str) -> str:
     hash_md5 = hashlib.md5(usedforsecurity=False)
     input_bytes = input_string.encode("utf-8")
@@ -303,8 +322,13 @@ class APIBackend:
             self.gcr_endpoint_max_token = LLM_SETTINGS.gcr_endpoint_max_token
             if not os.environ.get("PYTHONHTTPSVERIFY", "") and hasattr(ssl, "_create_unverified_context"):
                 ssl._create_default_https_context = ssl._create_unverified_context  # noqa: SLF001
-            self.chat_model_map = json.loads(LLM_SETTINGS.chat_model_map)
-            self.chat_model = LLM_SETTINGS.chat_model if chat_model is None else chat_model
+            self.chat_model_map = _resolve_chat_model_map()
+            self.chat_model = _resolve_model(
+                chat_model,
+                LLM_SETTINGS.chat_model,
+                LLM_SETTINGS.lightweight_chat_model,
+                LLM_SETTINGS.lightweight_model,
+            )
             self.encoder = None
         else:
             self.use_azure = LLM_SETTINGS.use_azure
@@ -343,9 +367,20 @@ class APIBackend:
             )
             
 
-            self.chat_model = LLM_SETTINGS.chat_model if chat_model is None else chat_model
-            self.reasoning_model = LLM_SETTINGS.reasoning_model if reasoning_model is None else reasoning_model
-            self.chat_model_map = json.loads(LLM_SETTINGS.chat_model_map)
+            self.chat_model = _resolve_model(
+                chat_model,
+                LLM_SETTINGS.chat_model,
+                LLM_SETTINGS.lightweight_chat_model,
+                LLM_SETTINGS.lightweight_model,
+            )
+            self.reasoning_model = _resolve_model(
+                reasoning_model,
+                LLM_SETTINGS.reasoning_model,
+                LLM_SETTINGS.lightweight_reasoning_model,
+                LLM_SETTINGS.lightweight_model,
+                LLM_SETTINGS.lightweight_chat_model,
+            )
+            self.chat_model_map = _resolve_chat_model_map()
             # self.encoder = self._get_encoder()
             
             self.chat_api_base = LLM_SETTINGS.chat_azure_api_base if chat_api_base is None else chat_api_base
@@ -401,6 +436,24 @@ class APIBackend:
             else:
                 self.chat_client = openai.OpenAI(api_key=self.chat_api_key, base_url=self.base_url)
                 self.embedding_client = openai.OpenAI(api_key=self.embedding_api_key, base_url=self.embedding_base_url)
+
+        if not hasattr(self, "chat_model"):
+            self.chat_model = _resolve_model(
+                chat_model,
+                LLM_SETTINGS.chat_model,
+                LLM_SETTINGS.lightweight_chat_model,
+                LLM_SETTINGS.lightweight_model,
+            )
+        if not hasattr(self, "reasoning_model"):
+            self.reasoning_model = _resolve_model(
+                reasoning_model,
+                LLM_SETTINGS.reasoning_model,
+                LLM_SETTINGS.lightweight_reasoning_model,
+                LLM_SETTINGS.lightweight_model,
+                LLM_SETTINGS.lightweight_chat_model,
+            )
+        if not hasattr(self, "chat_model_map"):
+            self.chat_model_map = _resolve_chat_model_map()
 
         self.dump_chat_cache = LLM_SETTINGS.dump_chat_cache if dump_chat_cache is None else dump_chat_cache
         self.use_chat_cache = LLM_SETTINGS.use_chat_cache if use_chat_cache is None else use_chat_cache

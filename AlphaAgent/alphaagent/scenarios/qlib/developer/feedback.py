@@ -1,5 +1,7 @@
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from jinja2 import Environment, StrictUndefined
@@ -14,7 +16,7 @@ from alphaagent.core.proposal import (
 )
 from alphaagent.log import logger
 from alphaagent.oai.llm_utils import APIBackend
-from alphaagent.scenarios.qlib.archive import get_task_descriptor, get_task_quality
+from alphaagent.scenarios.qlib.archive import DEFAULT_QUALITY_METRIC, get_task_descriptor, get_task_quality
 from alphaagent.utils import convert2bool
 
 rdagent_feedback_prompts = Prompts(file_path=Path(__file__).parent.parent / "prompts_rdagent.yaml")
@@ -92,6 +94,376 @@ def _compare_current_and_sota(row: pd.Series) -> str:
     if pd.isna(current):
         return "SOTA Result"
     return "Current Result" if current > sota else "SOTA Result"
+
+
+def combined_result_new(exp: Experiment, sota_result=None, archive=None) -> str:
+    """
+    Build compact EliteAlpha feedback.
+
+    The archive section intentionally hides incumbent factor names and
+    expressions. The LLM sees cell-level quality and replacement pressure, not a
+    leaderboard of exact factors to overfit.
+    """
+    sections = [
+        "EliteAlpha Combined Result",
+        "",
+        _format_candidate_factor_metrics(exp, archive),
+        "",
+        _format_experiment_metric_comparison(exp.result, sota_result),
+    ]
+    if archive is not None:
+        sections.extend(
+            [
+                "",
+                _format_archive_grid_state(archive),
+                "",
+                _format_next_round_guidance(exp, archive),
+            ]
+        )
+    return "\n".join(section for section in sections if section is not None)
+
+
+def _format_candidate_factor_metrics(exp: Experiment, archive) -> str:
+    rows = []
+    for task in exp.sub_tasks:
+        factor_name = getattr(task, "factor_name", getattr(task, "name", "unknown_factor"))
+        sub_result = _get_factor_sub_result(exp, factor_name)
+        descriptor = get_task_descriptor(archive, task) if archive is not None else None
+        incumbent = archive.get(descriptor) if archive is not None and descriptor is not None else None
+        quality = get_task_quality(exp, task)
+        incumbent_quality = getattr(incumbent, "quality", None)
+
+        rows.append(
+            {
+                "factor": factor_name,
+                "implemented": getattr(task, "factor_implementation", None),
+                "cell": _format_cell(descriptor),
+                "IC": _lookup_metric(sub_result, _IC_KEYS),
+                "Rank IC": _lookup_metric(sub_result, _RANK_IC_KEYS),
+                "ICIR": _lookup_metric(sub_result, _ICIR_KEYS),
+                "Rank ICIR": _lookup_metric(sub_result, _RANK_ICIR_KEYS),
+                "annualized_return": _lookup_metric(sub_result, _ANNUALIZED_RETURN_KEYS),
+                "information_ratio": _lookup_metric(sub_result, _INFORMATION_RATIO_KEYS),
+                "max_drawdown": _lookup_metric(sub_result, _MAX_DRAWDOWN_KEYS),
+                "archive_quality_metric": DEFAULT_QUALITY_METRIC,
+                "cell_sota_quality": incumbent_quality,
+                "quality_delta_vs_cell_sota": _numeric_delta(quality, incumbent_quality),
+                "archive_action": _candidate_archive_action(quality, incumbent),
+                "sign_flipped": _lookup_metric(sub_result, ("sign_flipped", "Sign Flipped")),
+            }
+        )
+
+    if not rows:
+        return "Candidate single-factor metrics:\n(no candidate factors)"
+
+    df = pd.DataFrame(rows)
+    text = "Candidate single-factor metrics and cell-SOTA comparison:\n"
+    text += _format_table(df)
+
+    if df[["annualized_return", "information_ratio", "max_drawdown"]].isna().all().all():
+        text += (
+            "\nNote: single-factor portfolio annualized_return/information_ratio/max_drawdown "
+            "are not available in the current runner output; use the experiment-level portfolio "
+            "comparison below for those portfolio metrics."
+        )
+    return text
+
+
+def _format_experiment_metric_comparison(current_result, sota_result) -> str:
+    rows = []
+    for label, keys, preference in _EXPERIMENT_METRICS:
+        current = _lookup_result_metric(current_result, keys)
+        sota = _lookup_result_metric(sota_result, keys)
+        rows.append(
+            {
+                "metric": label,
+                "current": current,
+                "sota": sota,
+                "delta": _numeric_delta(current, sota),
+                "winner": _compare_metric_values(current, sota, preference),
+            }
+        )
+    return "Experiment-level portfolio/signal metrics vs SOTA:\n" + _format_table(pd.DataFrame(rows))
+
+
+def _format_archive_grid_state(archive) -> str:
+    records = {
+        (record.category, int(record.depth_bin)): record
+        for record in archive.records()
+    }
+    replacement_counts = _archive_replacement_counts(archive)
+
+    rows = []
+    for category in archive.categories:
+        for depth_bin in archive.depth_bins:
+            key = (category, int(depth_bin))
+            record = records.get(key)
+            rows.append(
+                {
+                    "cell": f"({category}, {depth_bin})",
+                    "occupied": record is not None,
+                    "quality_metric": DEFAULT_QUALITY_METRIC,
+                    "quality_score": None if record is None else record.quality,
+                    "replacement_count": replacement_counts.get(key, 0),
+                }
+            )
+
+    header = [
+        "Archive state before current update (sanitized):",
+        f"- Coverage: {len(archive)}/{archive.total_cells} = {archive.coverage():.2%}",
+        f"- QD score: {_format_number(archive.qd_score())}",
+        "- Cell details: factor names and expressions are intentionally hidden.",
+        f"- Quality metric: {DEFAULT_QUALITY_METRIC}.",
+    ]
+    return "\n".join(header) + "\n" + _format_table(pd.DataFrame(rows))
+
+
+def _format_next_round_guidance(exp: Experiment, archive) -> str:
+    records = {
+        (record.category, int(record.depth_bin)): record
+        for record in archive.records()
+    }
+    empty_cells = [
+        (category, int(depth_bin))
+        for category in archive.categories
+        for depth_bin in archive.depth_bins
+        if (category, int(depth_bin)) not in records
+    ]
+    weak_cells = sorted(
+        [
+            (category, depth_bin, record.quality)
+            for (category, depth_bin), record in records.items()
+        ],
+        key=lambda item: item[2],
+    )[:5]
+
+    candidate_rows = []
+    accepted_count = 0
+    for task in exp.sub_tasks:
+        descriptor = get_task_descriptor(archive, task)
+        quality = get_task_quality(exp, task)
+        incumbent = archive.get(descriptor) if descriptor is not None else None
+        action = _candidate_archive_action(quality, incumbent)
+        accepted_count += int(action in {"fill_empty_cell", "replace_incumbent"})
+        candidate_rows.append(f"{getattr(task, 'factor_name', 'unknown_factor')}: {action}")
+
+    lines = ["Next-round guidance summary:"]
+    if empty_cells:
+        lines.append(
+            f"- Prioritize coverage: {len(empty_cells)} empty cells remain; examples: "
+            f"{_format_cell_examples(empty_cells)}."
+        )
+    elif weak_cells:
+        lines.append(
+            "- Archive is fully covered; prioritize weak-cell improvement over tiny edits to the global best."
+        )
+
+    if weak_cells:
+        weak_text = ", ".join(
+            f"({category}, {depth_bin}) q={_format_number(quality)}"
+            for category, depth_bin, quality in weak_cells
+        )
+        lines.append(f"- Weak occupied cells to improve: {weak_text}.")
+
+    if candidate_rows:
+        lines.append(f"- Current candidate archive actions: {'; '.join(candidate_rows)}.")
+        if accepted_count == 0:
+            lines.append(
+                "- No candidate is expected to improve the archive; change the economic mechanism, "
+                "normalization, or target cell rather than only changing one window size."
+            )
+    lines.append(
+        "- Keep diversity pressure: use mutation/crossover only when it changes the expression structure "
+        "and targets an empty or weak cell."
+    )
+    return "\n".join(lines)
+
+
+def _format_elite_archive_feedback_context(archive) -> str:
+    return _format_archive_grid_state(archive)
+
+
+def _format_elite_candidate_feedback_context(archive, exp: Experiment) -> tuple[str, bool]:
+    lines = ["Candidate archive placements from the current experiment:"]
+    any_accepted = False
+    for task in exp.sub_tasks:
+        descriptor = get_task_descriptor(archive, task)
+        quality = get_task_quality(exp, task)
+        if descriptor is None:
+            lines.append(f"- {task.factor_name}: missing category or complexity descriptor; cannot update archive.")
+            continue
+        if quality is None:
+            lines.append(f"- {task.factor_name}: cell=({descriptor.category}, {descriptor.depth_bin}), missing quality metric.")
+            continue
+
+        incumbent = archive.get(descriptor)
+        incumbent_quality = None if incumbent is None else incumbent.quality
+        accepted = incumbent is None or quality > incumbent_quality
+        any_accepted = any_accepted or accepted
+        lines.append(
+            f"- {task.factor_name}: cell=({descriptor.category}, {descriptor.depth_bin}), "
+            f"quality={_format_number(quality)}, incumbent_quality={_format_number(incumbent_quality)}, "
+            f"quality_delta={_format_number(_numeric_delta(quality, incumbent_quality))}, "
+            f"archive_action={_candidate_archive_action(quality, incumbent)}"
+        )
+    return "\n".join(lines), any_accepted
+
+
+_IC_KEYS = ("IC", "ic")
+_RANK_IC_KEYS = ("Rank IC", "RankIC", "rank_ic", "rank ic")
+_ICIR_KEYS = ("ICIR", "IC IR", "icir", "ic_ir")
+_RANK_ICIR_KEYS = ("Rank ICIR", "RankICIR", "rank_icir", "rank icir")
+_ANNUALIZED_RETURN_KEYS = (
+    "1day.excess_return_without_cost.annualized_return",
+    "annualized_return",
+    "Annualized Return",
+)
+_INFORMATION_RATIO_KEYS = (
+    "1day.excess_return_without_cost.information_ratio",
+    "information_ratio",
+    "Information Ratio",
+    "IR",
+)
+_MAX_DRAWDOWN_KEYS = (
+    "1day.excess_return_without_cost.max_drawdown",
+    "max_drawdown",
+    "Max Drawdown",
+)
+_EXPERIMENT_METRICS = (
+    ("single/batch IC", _IC_KEYS, "higher"),
+    ("single/batch Rank IC", _RANK_IC_KEYS, "higher"),
+    ("annualized_return", _ANNUALIZED_RETURN_KEYS, "higher"),
+    ("information_ratio", _INFORMATION_RATIO_KEYS, "higher"),
+    ("max_drawdown_abs", _MAX_DRAWDOWN_KEYS, "lower_abs"),
+)
+
+
+def _get_factor_sub_result(exp: Experiment, factor_name: str) -> Mapping[str, Any]:
+    sub_result = getattr(exp, "sub_results", {}).get(factor_name)
+    if isinstance(sub_result, Mapping):
+        return sub_result
+    if sub_result is None:
+        return {}
+    return {"quality": sub_result, "Rank IC": sub_result}
+
+
+def _lookup_metric(values: Mapping[str, Any], keys: tuple[str, ...]):
+    if not values:
+        return None
+    normalized = {_normalize_key(key): key for key in values}
+    for key in keys:
+        actual_key = normalized.get(_normalize_key(key))
+        if actual_key is not None:
+            return _coerce_display_value(values[actual_key])
+    return None
+
+
+def _lookup_result_metric(result, keys: tuple[str, ...]):
+    if result is None:
+        return None
+    series = _result_to_series(result)
+    if series.empty:
+        return None
+    normalized = {_normalize_key(key): key for key in series.index}
+    for key in keys:
+        actual_key = normalized.get(_normalize_key(key))
+        if actual_key is not None:
+            return _coerce_display_value(series.loc[actual_key])
+    return None
+
+
+def _normalize_key(value: Any) -> str:
+    return str(value).strip().lower().replace("_", " ").replace("-", " ")
+
+
+def _coerce_display_value(value):
+    if isinstance(value, (pd.Series, pd.DataFrame)):
+        if len(value) == 1:
+            value = value.iloc[0]
+        else:
+            return str(value)
+    if isinstance(value, bool):
+        return value
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.notna(numeric):
+        return float(numeric)
+    if value is None or pd.isna(value):
+        return None
+    return value
+
+
+def _numeric_delta(current, baseline):
+    current_num = pd.to_numeric(current, errors="coerce")
+    baseline_num = pd.to_numeric(baseline, errors="coerce")
+    if pd.isna(current_num) or pd.isna(baseline_num):
+        return None
+    return float(current_num - baseline_num)
+
+
+def _compare_metric_values(current, baseline, preference: str) -> str:
+    current_num = pd.to_numeric(current, errors="coerce")
+    baseline_num = pd.to_numeric(baseline, errors="coerce")
+    if pd.isna(current_num) and pd.isna(baseline_num):
+        return "N/A"
+    if pd.isna(baseline_num):
+        return "current (no SOTA)"
+    if pd.isna(current_num):
+        return "SOTA"
+    if preference == "lower_abs":
+        return "current" if abs(current_num) < abs(baseline_num) else "SOTA"
+    return "current" if current_num > baseline_num else "SOTA"
+
+
+def _candidate_archive_action(quality, incumbent) -> str:
+    if quality is None:
+        return "missing_quality"
+    if incumbent is None:
+        return "fill_empty_cell"
+    return "replace_incumbent" if quality > incumbent.quality else "reject_below_incumbent"
+
+
+def _archive_replacement_counts(archive) -> dict[tuple[str, int], int]:
+    counts: dict[tuple[str, int], int] = {}
+    for item in getattr(archive, "hist", []):
+        if not getattr(item, "accepted", False) or getattr(item, "incumbent", None) is None:
+            continue
+        descriptor = getattr(item, "descriptor", None)
+        if descriptor is None:
+            continue
+        key = (descriptor.category, int(descriptor.depth_bin))
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _format_cell(descriptor) -> str:
+    if descriptor is None:
+        return "N/A"
+    return f"({descriptor.category}, {descriptor.depth_bin})"
+
+
+def _format_cell_examples(cells: list[tuple[str, int]], limit: int = 8) -> str:
+    examples = ", ".join(f"({category}, {depth_bin})" for category, depth_bin in cells[:limit])
+    if len(cells) > limit:
+        examples += ", ..."
+    return examples
+
+
+def _format_number(value) -> str:
+    if value is None:
+        return "N/A"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    numeric = pd.to_numeric(value, errors="coerce")
+    if pd.isna(numeric):
+        return str(value)
+    return f"{float(numeric):.6g}"
+
+
+def _format_table(df: pd.DataFrame) -> str:
+    display_df = df.copy()
+    for column in display_df.columns:
+        display_df[column] = display_df[column].map(_format_number)
+    return display_df.to_string(index=False)
 
 
 class QlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):
@@ -241,7 +613,7 @@ class EliteAlphaQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Fee
         hypothesis_text = hypothesis.hypothesis
         tasks_factors = [task.get_task_information_and_implementation_result() for task in exp.sub_tasks]
         sota_result = exp.based_experiments[-1].result
-        combined_result = process_results(exp.result, sota_result)
+        combined_result = combined_result_new(exp, sota_result=sota_result, archive=archive)
 
         archive_context = _format_elite_archive_feedback_context(archive)
         candidate_context, deterministic_archive_acceptance = _format_elite_candidate_feedback_context(archive, exp)
@@ -299,52 +671,6 @@ class EliteAlphaQlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Fee
             reason=reason,
             decision=decision,
         )
-
-
-def _format_elite_archive_feedback_context(archive) -> str:
-    best = archive.best()
-    best_text = "None" if best is None else f"{best.factor_name}, quality={best.quality}, cell=({best.category}, {best.depth_bin})"
-    lines = [
-        "MAP-Elites archive before this update:",
-        f"- Coverage: {len(archive)}/{archive.total_cells} = {archive.coverage():.2%}",
-        f"- QD score: {archive.qd_score()}",
-        f"- Best elite: {best_text}",
-    ]
-    records = archive.to_records()
-    if records:
-        lines.append("- Occupied cells:")
-        for record in records:
-            lines.append(
-                f"  - ({record['category']}, {record['depth_bin']}): "
-                f"{record['factor_name']}, quality={record['quality']}, expression={record['factor_expression']}"
-            )
-    else:
-        lines.append("- Occupied cells: None")
-    return "\n".join(lines)
-
-
-def _format_elite_candidate_feedback_context(archive, exp: Experiment) -> tuple[str, bool]:
-    lines = ["Candidate archive placements from the current experiment:"]
-    any_accepted = False
-    for task in exp.sub_tasks:
-        descriptor = get_task_descriptor(archive, task)
-        quality = get_task_quality(exp, task)
-        if descriptor is None:
-            lines.append(f"- {task.factor_name}: missing category or AST-depth descriptor; cannot update archive.")
-            continue
-        if quality is None:
-            lines.append(f"- {task.factor_name}: cell=({descriptor.category}, {descriptor.depth_bin}), missing quality metric.")
-            continue
-
-        incumbent = archive.get(descriptor)
-        accepted = incumbent is None or quality > incumbent.quality
-        any_accepted = any_accepted or accepted
-        incumbent_text = "empty" if incumbent is None else f"{incumbent.factor_name}, quality={incumbent.quality}"
-        lines.append(
-            f"- {task.factor_name}: cell=({descriptor.category}, {descriptor.depth_bin}), "
-            f"quality={quality}, incumbent={incumbent_text}, archive_acceptance={'yes' if accepted else 'no'}"
-        )
-    return "\n".join(lines), any_accepted
 
 
 class QlibModelHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):

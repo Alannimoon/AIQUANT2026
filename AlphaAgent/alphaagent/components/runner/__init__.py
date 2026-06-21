@@ -22,4 +22,5 @@ class CachedRunner(Developer[ASpecificExp]):
         if exp.based_experiments and exp.based_experiments[-1].result is None:
             exp.based_experiments[-1].result = cached_res.based_experiments[-1].result
         exp.result = cached_res.result
+        exp.sub_results = cached_res.sub_results
         return exp

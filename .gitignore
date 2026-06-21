@@ -44,3 +44,6 @@ AlphaAgent/qlib/
 
 # Jupyter
 .ipynb_checkpoints/
+
+/baselines/direct_factor_backtests
+/baselines/mlruns

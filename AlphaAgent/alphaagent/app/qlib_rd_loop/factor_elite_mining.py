@@ -77,6 +77,9 @@ def main(path=None, step_n=None, direction=None, stop_event=None):
             )
         else:
             model_loop = EliteAlphaLoop.load(path, use_local=use_local)
+            if direction is not None and hasattr(model_loop.hypothesis_generator, "potential_direction"):
+                model_loop.hypothesis_generator.potential_direction = direction
+                logger.info(f"Update resumed EliteAlpha direction: {direction}")
         model_loop.run(step_n=step_n, stop_event=stop_event)
     except Exception as e:
         logger.error(f"执行过程中发生错误: {str(e)}")

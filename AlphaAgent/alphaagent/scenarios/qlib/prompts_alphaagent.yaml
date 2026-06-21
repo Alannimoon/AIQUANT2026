@@ -389,13 +389,16 @@ hypothesis2experiment:
     {{function_lib_description}}
 
 
-    {% if expression_duplication %}
-    **Alert: Duplication Detected in Previous Factor Expressions**
-    {{ expression_duplication }}
+    {% set rejection_feedback = expression_rejection | default(expression_duplication | default(None)) %}
+    {% if rejection_feedback %}
+    **Alert: Previous Factor Expressions Were Rejected**
+    {{ rejection_feedback }}
 
     Recommendations:
-    - Avoid the duplicated sub-expressions above
-    - Generate novel factor by uniquely combining data variables and operations
+    - Address every rejection reason above instead of retrying a small variant of the same expression.
+    - Avoid one-wrapper raw-variable expressions such as `RANK($open)`, `RANK($return)`, `ZSCORE($open)`, or `ZSCORE($return)`.
+    - Generate a novel factor by uniquely combining data variables and operations.
+    - For cross-sectional factors, rank or standardize a transformed signal, such as a price spread, normalized range, abnormal volume signal, or short-window time-series statistic.
     - Experiment with a mix of mathematical operations (e.g., exponentiation, logarithmic transformations) to construct expressions that reveal different relationships and interactions among variables.
     - Replace raw variables with transformed variants to enhance expressiveness, such as using `$open`, `$close/TS_MEAN($close, 10)`, or `($open + $close) / 2` instead of `$close` to normalize or adjust for trends.
     {% endif %}
@@ -408,4 +411,3 @@ expression_duplication: |-
   - Proposed Expression: {{ prev_expression }}
   - Duplicated Sub-expression Size: {{ duplicated_subtree_size }}
   - Duplicated Sub-expression: {{ duplicated_subtree }}
-

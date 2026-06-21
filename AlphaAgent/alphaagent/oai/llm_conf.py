@@ -40,6 +40,11 @@ class LLMSettings(ExtendedBaseSettings):
     chat_azure_api_version: str = ""
     chat_model: str = "gpt-4-turbo"
     reasoning_model: str = ""
+    use_lightweight_llm: bool = False
+    lightweight_model: str = ""
+    lightweight_chat_model: str = ""
+    lightweight_reasoning_model: str = ""
+    lightweight_chat_model_map: str = ""
     chat_max_tokens: int = 3000
     chat_temperature: float = 0.5
     chat_stream: bool = True

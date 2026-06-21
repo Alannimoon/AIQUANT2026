@@ -1,4 +1,4 @@
-"""One-shot evaluation: factor expression -> Table 2 row + Figure 3 pkl.
+r"""One-shot evaluation: factor expression -> Table 2 row + Figure 3 pkl.
 
 For SYS / anyone: after mining, pick a factor expression, run this once,
 and it produces everything needed for the paper's evaluation section
@@ -25,6 +25,7 @@ Usage:
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -47,6 +48,10 @@ ACCOUNT = 100_000_000
 
 OUT_DIR = REPO / "baselines" / "direct_factor_backtests"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def escape_matplotlib_text(text: str) -> str:
+    return text.replace("$", r"\$")
 
 
 def per_day_ic(pred: pd.Series, label: pd.Series) -> pd.DataFrame:
@@ -154,6 +159,23 @@ def main() -> None:
     out_pkl = OUT_DIR / f"{name}_report_normal_1day.pkl"
     report.to_pickle(out_pkl)
 
+    out_meta = OUT_DIR / f"{name}_metadata.json"
+    out_meta.write_text(
+        json.dumps(
+            {
+                "name": name,
+                "expression": expr,
+                "sign_flipped": flipped,
+                "start": START,
+                "end": END,
+                "benchmark": BENCHMARK,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
     # ── 5. Solo cumulative-excess plot (so you can eyeball this one
     #       factor without rebuilding the full Figure 3) ───────────
     import matplotlib.pyplot as plt
@@ -171,7 +193,16 @@ def main() -> None:
                  fontsize=10)
     ax.legend(loc="best", frameon=True, fontsize=9)
     ax.grid(True, alpha=0.3)
-    fig.tight_layout()
+    fig.text(
+        0.01,
+        0.018,
+        escape_matplotlib_text(f"{name} factor expression: {expr}"),
+        ha="left",
+        va="bottom",
+        fontsize=6,
+        family="monospace",
+    )
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
     fig_pdf = OUT_DIR / f"{name}_cum_excess.pdf"
     fig_png = OUT_DIR / f"{name}_cum_excess.png"
     fig.savefig(fig_pdf)
@@ -197,6 +228,8 @@ def main() -> None:
     print(f"  Solo cum-excess plot saved:")
     print(f"    {fig_pdf.relative_to(REPO)}")
     print(f"    {fig_png.relative_to(REPO)}")
+    print(f"  Metadata saved:")
+    print(f"    {out_meta.relative_to(REPO)}")
 
 
 if __name__ == "__main__":

@@ -94,11 +94,22 @@ class FactorFBWorkspace(FBWorkspace):
         self.raise_exception = raise_exception
 
     def hash_func(self, data_type: str = "Debug") -> str:
-        return (
-            md5_hash(data_type + self.code_dict["factor.py"])
-            if ("factor.py" in self.code_dict and not self.raise_exception)
-            else None
+        if "factor.py" not in self.code_dict or self.raise_exception:
+            return None
+
+        source_data_path = Path(
+            FACTOR_COSTEER_SETTINGS.data_folder_debug
+            if data_type == "Debug"
+            else FACTOR_COSTEER_SETTINGS.data_folder
         )
+        daily_pv_path = source_data_path / "daily_pv.h5"
+        try:
+            daily_pv_stat = daily_pv_path.stat()
+            daily_pv_signature = f"{daily_pv_path.resolve()}:{daily_pv_stat.st_size}:{daily_pv_stat.st_mtime_ns}"
+        except FileNotFoundError:
+            daily_pv_signature = f"{daily_pv_path.resolve()}:missing"
+
+        return md5_hash(f"{data_type}|{daily_pv_signature}|{self.code_dict['factor.py']}")
 
     @cache_with_pickle(hash_func)
     def execute(self, data_type: str = "Debug") -> Tuple[str, pd.DataFrame]:

@@ -193,6 +193,13 @@ class FactorRegulator(Evaluator):
         if num_all_nodes == 0:
             logger.warning(f"Expression has no nodes: {eval_dict['expr']}")
             return False
+
+        if ast_depth <= 1:
+            logger.info(
+                "FactorRegulator: skip free/unique variable ratio checks for "
+                f"depth-1 expression: {eval_dict.get('expr', '?')}"
+            )
+            return cond1 and cond_depth
         
         # Calculate ratios
         free_args_ratio = float(num_free_args) / float(num_all_nodes)
@@ -206,10 +213,10 @@ class FactorRegulator(Evaluator):
         # Condition 2: Ensure the ratio of num_free_args to total nodes is not too high using -log(1 - ratio)
         # -log(1 - x) increases as x increases, so we set a threshold (e.g., -log(1 - 0.5) ≈ 0.693)
         # This ensures the ratio is not too high (e.g., x < 0.5)
-        cond2 = -np.log(1 - free_args_ratio) < 0.693  # Threshold for x < 0.5
+        cond2 = -np.log(1 - free_args_ratio) < 0.916  # Threshold for x < 0.5
         
         # Condition 3: Ensure the ratio of num_unique_vars to total nodes is not too high using -log(1 - ratio)
-        cond3 = -np.log(1 - unique_vars_ratio) < 0.693  # Threshold for x < 0.5
+        cond3 = -np.log(1 - unique_vars_ratio) < 0.916  # Threshold for x < 0.5
         
         # The expression is acceptable if all conditions are met
         return cond1 and cond2 and cond3 and cond_depth

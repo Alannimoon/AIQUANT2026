@@ -39,6 +39,10 @@ def DELTA(df:pd.DataFrame, p:int=1):
     return df.groupby('instrument').transform(lambda x: x.diff(periods=p))
 
 @datatype_adapter
+def TS_DELTA(df: pd.DataFrame, p: int = 1):
+    return DELTA(df, p)
+
+@datatype_adapter
 def RANK(df:pd.DataFrame):
     """计算横截面排序"""
     return df.groupby('datetime').rank(pct=True)
@@ -181,8 +185,57 @@ def DELAY(df:pd.DataFrame, p:int=1):
     return df.groupby('instrument').transform(lambda x: x.shift(p))
 
 
+def _as_single_series(value):
+    if isinstance(value, pd.DataFrame):
+        if value.shape[1] == 0:
+            return pd.Series(dtype=float, index=value.index)
+        return value.iloc[:, 0]
+    return value
+
+
+def _rolling_pairwise_by_instrument(df1, df2, p: int, method: str):
+    left = _as_single_series(df1)
+    right = _as_single_series(df2)
+
+    if isinstance(right, np.ndarray):
+        if p != len(right):
+            p = len(right)
+
+        def apply_array(window):
+            y = right[: len(window)]
+            if method == "corr":
+                std_x = np.std(window)
+                std_y = np.std(y)
+                if std_x == 0 or std_y == 0:
+                    return np.nan
+                return np.corrcoef(window, y)[0, 1]
+            return np.cov(window, y)[0, 1]
+
+        left = pd.to_numeric(left, errors="coerce")
+        if isinstance(left.index, pd.MultiIndex) and "instrument" in left.index.names:
+            return left.groupby(level="instrument", group_keys=False).transform(
+                lambda x: x.rolling(p, min_periods=2).apply(apply_array, raw=True)
+            )
+        return left.rolling(p, min_periods=2).apply(apply_array, raw=True)
+
+    if not isinstance(left, pd.Series) or not isinstance(right, pd.Series):
+        raise TypeError(f"{method} expects pandas Series/DataFrame or numpy array inputs.")
+
+    left = pd.to_numeric(left, errors="coerce")
+    right = pd.to_numeric(right, errors="coerce")
+    left, right = left.align(right, join="inner")
+
+    if isinstance(left.index, pd.MultiIndex) and "instrument" in left.index.names:
+        return left.groupby(level="instrument", group_keys=False).apply(
+            lambda x: getattr(x.rolling(p, min_periods=2), method)(right.loc[x.index])
+        ).sort_index()
+
+    return getattr(left.rolling(p, min_periods=2), method)(right).sort_index()
+
+
 def TS_CORR(df1:pd.Series, df2: np.ndarray | pd.Series, p:int=5):
     """计算两个序列的滚动相关性"""
+    return _rolling_pairwise_by_instrument(df1, df2, p, "corr")
     if isinstance(df2, np.ndarray) and p != len(df2):
         p = len(df2)
         def corr(window):
@@ -219,6 +272,7 @@ def TS_CORR(df1:pd.Series, df2: np.ndarray | pd.Series, p:int=5):
 
 def TS_COVARIANCE(df1:pd.DataFrame, df2:pd.DataFrame, p:int=5):  
     """计算两个序列的滚动协方差"""
+    return _rolling_pairwise_by_instrument(df1, df2, p, "cov")
     if isinstance(df2, np.ndarray) and p != len(df2):
         p = len(df2)
         def cov(window):
