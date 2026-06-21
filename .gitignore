@@ -47,3 +47,4 @@ AlphaAgent/qlib/
 
 /baselines/direct_factor_backtests
 /baselines/mlruns
+/figures

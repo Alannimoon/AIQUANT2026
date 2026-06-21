@@ -1,0 +1,10 @@
+factor_name,factor_expression,sys_quality
+TS_SUM_3D_Return_Momentum,"TS_SUM($return, 3)",0.00205
+Volatility_Regime_Intraday_Momentum,"($close - $low) * TS_STD($return, 10)",0.00248
+ZScore_TSRank_SUM3_VolNorm_Momentum,"ZSCORE(TS_RANK(TS_SUM($return, 3), 20) / (TS_STD($return, 10) + 1e-8))",0.00357
+Reversal_VolumeDeviation_IntradayWeakness_5D_Sum,"TS_SUM(($low - $close) * ($volume - TS_MEAN($volume, 20)), 5)",0.00639
+Reversal_VolVolume_Intraday_Weakness_10D,"($low - $close) * TS_STD($volume, 10)",0.00513
+Conviction_Directional_Volume_Anomaly_20D,"SIGN($return) * ($volume - TS_MEAN($volume, 20))",0.00169
+Reversal_IntradayWeakness_VolumeRank_Sum_5D,"TS_SUM(($low - $close) * TS_RANK($volume, 20), 5)",0.00515
+Negative_Daily_Return,"-$return",0.00212
+CrossSectional_Vol_Weighted_Reversal_5D,"ZSCORE(TS_SUM(($high - $close) * $volume, 5))",0.00348

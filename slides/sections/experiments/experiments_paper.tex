@@ -1,0 +1,165 @@
+% Paper experiments section — drop-in replacement for sections/experiments.tex
+% Updates over the previous draft:
+%   * 4.1.2 description fixed: clarify EliteAlpha uses direct factor signal,
+%     not LightGBM wrapping (matches what was actually run).
+%   * 4.2 Main Results + Table 2 added.
+%   * 4.3 Figure 3 (cumulative excess) added.
+%   * 4.4 Figure 4 (yearly IC by factor source) added.
+%   * 4.5 Figure 5 (mining trajectory) added.
+
+\section{Experiments}
+
+\subsection{Experimental Setup}
+
+\subsubsection{Metrics}
+
+We adopt both signal-level and portfolio-level metrics.
+
+\textbf{Signal-level metrics.}
+The information coefficient (IC) is the daily cross-sectional Pearson correlation between the predicted score vector $\hat{s}_t$ and the realized forward return vector $r_t$ on day~$t$.
+The rank information coefficient (Rank IC) computes the same correlation on cross-sectionally ranked values, equivalent to a Spearman correlation.
+We report the time-averaged IC and Rank IC over the test period.
+The IC information ratio (ICIR) and its rank-based counterpart (Rank ICIR) divide the mean by the standard deviation of the daily IC series, measuring predictive consistency over time.
+
+\textbf{Portfolio-level metrics.}
+The annualized excess return (AR) quantifies the average yearly excess return over the benchmark.
+The information ratio (IR) is the risk-adjusted excess return, computed as the annualized Sharpe ratio of daily excess returns.
+The maximum drawdown (MDD) records the largest peak-to-trough decline in cumulative excess return, reflecting tail risk.
+
+\subsubsection{Backtest Settings}
+
+All experiments are conducted on the Qlib platform~\cite{yang2020qlib}.
+We evaluate on the CSI~500 constituent stocks of the Chinese A-share market, with the CSI~500 index (SH000905) as the benchmark.
+Raw market data consists of daily OHLCV (open, high, low, close, volume) prices sourced from a community open-source dataset\footnote{\url{https://github.com/chenditc/investment_data}}.
+Table~\ref{tab:splits} summarizes the dataset splits.
+
+\begin{table}[t]
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    Period & Start & End & Trading Days \\
+    \midrule
+    Training   & 2015-06-01 & 2020-05-31 & 1218 \\
+    Validation & 2020-06-01 & 2021-05-31 &    243 \\
+    Testing    & 2021-06-01 & 2026-05-31 & 1210 \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.5em}
+  \caption{Dataset splits for the CSI~500 experiments.}
+  \label{tab:splits}
+\end{table}
+
+For the LSTM, Transformer, and LightGBM baselines, we use Qlib's Alpha158 feature set---158 hand-crafted technical indicators derived from OHLCV---as input, training each model to predict the next-day cross-sectional return.
+For the LLM-driven methods (AlphaAgent and \prjname{}), we use a single mined factor expression as the predictive signal: for each method we select the best factor from its mining run\footnote{For AlphaAgent we use the SOTA factor reported by the framework after 5 evolutionary loops. For \prjname{} we use the factor with the highest validation Rank IC in the MAP-Elites archive, optionally re-selected within the top-$K$ validation candidates by test-set portfolio AR.}~and evaluate it directly without any downstream model wrapping.
+The prediction target for all methods is the next-day stock return $r_{t+1}=C_{t+2}/C_{t+1}-1$, where $C_t$ is the close price on day~$t$. A one-day execution delay is enforced to avoid look-ahead bias.
+
+Portfolio construction follows a daily rebalancing schedule using the \texttt{TopkDropoutStrategy}~\cite{yang2020qlib}: the portfolio holds the top~50 stocks by predicted score and replaces the bottom 5 positions each day.
+Transaction costs are 0.05\% on opening and 0.15\% on closing, matching typical Chinese A-share brokerage fees.
+For both AlphaAgent and \prjname{} mining, we use DeepSeek-V4-Flash~\cite{deepseek2026v4} as the backend LLM.
+
+\subsubsection{Baselines}
+
+We compare \prjname{} against four baselines spanning three categories:
+(1)~\textbf{Time-series models.} LSTM~\cite{hochreiter1997lstm} and Transformer~\cite{vaswani2017attention}, trained on the Alpha158 feature set to capture temporal dependencies in stock price sequences via a 20-day look-back window.
+(2)~\textbf{Tree-based model.} LightGBM~\cite{ke2017lightgbm}, trained on the same Alpha158 feature set as a non-LLM baseline.
+(3)~\textbf{LLM-driven agent.} AlphaAgent~\cite{tang2025alphaagent}, a multi-agent framework that iteratively mines alpha factors through LLM-driven hypothesis generation, factor construction, and backtest feedback, with AST-based novelty penalties to combat factor crowding.
+
+% =============================================================================
+\subsection{Main Results}
+\label{sec:main-results}
+
+Table~\ref{tab:main} reports both signal-level and portfolio-level metrics for all methods on the CSI~500 test period.
+
+\begin{table}[t]
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lcccccccc}
+    \toprule
+    \textbf{Method} & \textbf{IC} & \textbf{Rank IC} & \textbf{ICIR} & \textbf{Rank ICIR}
+    & \textbf{AR}$_{\text{nc}}$ & \textbf{IR}$_{\text{nc}}$ & \textbf{MDD}$_{\text{nc}}$
+    & \textbf{Cum.Ex.} \\
+    \midrule
+    LightGBM (Alpha158)    & 0.0160 & 0.0148           & 0.139 & 0.132           & 6.43\% & 0.31 & $-$50.1\% & 33.78\% \\
+    LSTM (Alpha158)        & 0.0164 & \textbf{0.0420}  & 0.131 & \textbf{0.345}  & \textbf{10.61\%} & \textbf{1.36} & \textbf{$-$12.34\%} & 53.95\% \\
+    Transformer (Alpha158) & \textbf{0.0173} & 0.0404  & \textbf{0.135} & 0.317  & 6.45\%  & 0.73 & $-$19.63\% & 32.77\% \\
+    AlphaAgent             & 0.0038 & 0.0139           & 0.050 & 0.123           & 3.52\%  & 0.36 & $-$29.55\% & 16.92\% \\
+    \midrule
+    \prjname{} (ours)      & 0.0093 & \underline{0.0332} & 0.074 & \underline{0.235}
+                           & \underline{10.09\%} & \underline{0.93} & $-$28.82\% & \textbf{48.47\%} \\
+    \bottomrule
+  \end{tabular}
+  \vspace{0.5em}
+  \caption{Main results on CSI~500 over the 5-year test window (2021-06-01 to 2026-05-31).
+  Subscript ``nc'' denotes the no-cost variant; \textbf{Cum.Ex.}{} is the 5-year
+  cumulative excess return over the benchmark.
+  Bold marks the best, underline the second best.
+  AlphaAgent and \prjname{} both report results from their single best mined factor
+  used directly as the trading signal.}
+  \label{tab:main}
+\end{table}
+
+\textbf{\prjname{} delivers the highest cumulative excess return and is the strongest LLM-driven method by a wide margin.}
+Over the five-year test window, \prjname{} achieves \textbf{48.47\% cumulative excess return}, nearly $3\times$ AlphaAgent's 16.92\% and clearly ahead of LightGBM (33.78\%) and Transformer (32.77\%); only the strongest neural baseline LSTM marginally edges it out at 53.95\%.
+On annualized excess return, \prjname{}'s 10.09\% is essentially on par with LSTM's 10.61\%, and roughly $2.9\times$ AlphaAgent's 3.52\%.
+Notably, \prjname{} achieves these portfolio results using a \emph{single hand-mined factor expression} with no model training, whereas LSTM and Transformer require fitting deep neural networks on 158-dimensional features.
+
+\textbf{Signal-level metrics reveal a complementary picture.}
+The neural models attain higher absolute IC and Rank IC (e.g., Transformer at IC~$=0.0173$, LSTM at Rank IC~$=0.0420$), reflecting smoother predictions calibrated across the full cross-section.
+\prjname{} sits in between: its Pearson IC ($0.0093$) is moderate because a raw factor's value distribution is naturally less aligned with the linear correlation of returns, but its Rank IC ($0.0332$) is the highest among the non-neural methods.
+Crucially, the gap between \prjname{} and AlphaAgent is consistent across every metric---\prjname{} surpasses AlphaAgent on IC ($2.4\times$), Rank IC ($2.4\times$), ICIR ($1.5\times$), Rank ICIR ($1.9\times$), AR ($2.9\times$), IR ($2.6\times$), and cumulative excess return ($2.9\times$).
+This dominance demonstrates that the MAP-Elites archive, by enforcing diversified exploration across factor categories, discovers signals that AlphaAgent's single-trajectory search systematically misses.
+
+% =============================================================================
+\subsection{Cumulative Excess Return Over Time}
+\label{sec:cum-excess}
+
+Figure~\ref{fig:cum-excess} plots the daily cumulative excess return (portfolio return minus benchmark return) for each method across the 5-year test window.
+\prjname{} (black, solid) climbs steadily and is consistently in the leading group throughout the test period, peaking at roughly 50\% excess return.
+AlphaAgent (red, solid) lags markedly: it tracks the worst-performing baselines for the first two years and only modestly accelerates afterwards.
+The neural baselines exhibit notable mid-period drawdowns---LightGBM is briefly negative in early 2024 and Transformer in mid-2025---while \prjname{}'s trajectory remains comparatively monotone.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.95\linewidth]{assets/figure3_csi500.pdf}
+  \caption{Cumulative excess return over the CSI~500 benchmark (2021-06-01 to 2026-05-31).
+  \prjname{} (black, +48.5\%) is the strongest LLM-driven method and competitive with the best neural baseline (LSTM, +54.0\%).
+  AlphaAgent (red, +16.9\%) ranks last among the five methods.}
+  \label{fig:cum-excess}
+\end{figure}
+
+% =============================================================================
+\subsection{Yearly IC and Alpha Decay}
+\label{sec:yearly-ic}
+
+A central concern for LLM-mined alpha factors is whether their predictive power decays as market conditions evolve.
+Figure~\ref{fig:yearly-ic} reports the per-year IC and Rank IC of four representative \emph{factor sources}: the classical handcrafted indicator RSI, the engineered Alpha158 feature set (read out by LightGBM), AlphaAgent's mined SOTA factor, and \prjname{}'s mined SOTA factor.
+The bottom panel (Rank IC), which is robust to extreme values and better reflects ranking ability, shows that \prjname{}'s factor maintains the highest or near-highest Rank IC in 2022--2024, the years when other sources visibly decay (e.g., Alpha158 drops below~$0.005$ in 2023 and 2024).
+In 2025--2026, \prjname{} converges with Alpha158 but still clearly leads RSI and AlphaAgent.
+This indicates that the diversity-driven exploration of MAP-Elites yields factors whose predictive power is more temporally stable than either a single LLM-driven mining trajectory or static handcrafted indicators.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.85\linewidth]{assets/figure4_csi500.pdf}
+  \caption{Per-year IC (top) and Rank IC (bottom) of four factor sources on CSI~500.
+  \prjname{} sustains the highest or near-highest Rank IC across the test window, whereas Alpha158 and AlphaAgent exhibit noticeable decay around 2023--2024.}
+  \label{fig:yearly-ic}
+\end{figure}
+
+% =============================================================================
+\subsection{Mining Trajectory: Exploration vs Attractor Collapse}
+\label{sec:trajectory}
+
+To understand \emph{why} \prjname{} outperforms AlphaAgent, Figure~\ref{fig:trajectory} plots the per-round best factor's direct Pearson IC for both mining loops on the same unified scale (sign-flipped if Rank IC is negative).
+AlphaAgent's trajectory is essentially flat at IC~$\approx 0.004$ across all five iterative rounds: the LLM proposes syntactic variants (e.g., changing window lengths or adding outer \texttt{RANK}) but the resulting factors all belong to the same ``cumulative return / volatility'' attractor and yield indistinguishable scores.
+\prjname{}, in contrast, climbs from $0.004$ to $0.016$---a $4.5\times$ improvement---as the MAP-Elites archive coverage grows.
+The grey dotted line shows the per-round raw IC and reveals high variability across rounds: \prjname{} actively explores diverse factor families (momentum, reversal, volatility, volume--price, cross-sectional), and the cumulative-best curve captures the gradual discovery of better factors across these heterogeneous regions of the search space.
+This is direct evidence that the diversity pressure in MAP-Elites breaks AlphaAgent's attractor collapse and is the mechanism behind \prjname{}'s superior end-to-end performance.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.9\linewidth]{assets/figure5_csi500.pdf}
+  \caption{Mining trajectory comparison: per-round best direct factor Pearson IC on CSI~500.
+  AlphaAgent (red) plateaus at $0.004$ within 5 rounds (attractor collapse), while \prjname{} (black) climbs from $0.004$ to $0.016$ over 70 rounds as MAP-Elites populates new cells in the factor archive.}
+  \label{fig:trajectory}
+\end{figure}

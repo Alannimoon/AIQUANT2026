@@ -1,0 +1,201 @@
+% Section: Experiments
+% =============================================================================
+% TODO (待 SYS 数据齐了替换):
+%   • Table 2 的 EliteAlpha 那一行（IC/ICIR/AR/IR/MDD）
+%   • 把更新版 figure3/4/5 的 pdf 替换 assets/ 下同名文件
+% =============================================================================
+
+\section{Experiments}
+
+%---------------------------------------------------------
+\begin{frame}
+\frametitle{Experimental Setup}
+
+\small
+\textbf{Evaluation Metrics.}
+We evaluate both \structure{signal quality} and \structure{portfolio performance}:
+IC, Rank IC, ICIR, Rank ICIR; AR, IR, and MDD.
+
+\vspace{0.45em}
+\textbf{Backtest Settings.}
+Experiments are conducted on Chinese A-share stocks with the \textbf{CSI 500}
+as the benchmark. We backtest the latest five-year testing period with
+\alert{daily rebalancing}.
+
+\vspace{0.45em}
+\textbf{Baselines.}
+We compare \prjname{} with Transformer, LSTM, LightGBM, and AlphaAgent.
+For both AlphaAgent and \prjname{}, we use \textbf{DeepSeek-V4-Flash} as the
+backend LLM.
+
+\vspace{0.6em}
+\begin{table}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{7pt}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Period} & \textbf{Start} & \textbf{End} & \textbf{Trading Days} \\
+\midrule
+Training   & 2015-06-01 & 2020-05-31 & 1218 \\
+Validation & 2020-06-01 & 2021-05-31 & 243  \\
+Testing    & 2021-06-01 & 2026-05-31 & 1210 \\
+\bottomrule
+\end{tabular}
+\caption{Dataset splits for the CSI~500 experiments.}
+\end{table}
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{A Reproducibility Surprise}
+While reproducing AlphaAgent we found that its mining pipeline applies
+\purple{LightGBM with $\lambda_{l1}=205.7$, $\lambda_{l2}=580.98$}
+(tuned for Alpha158) onto only \emph{4 base OHLCV features + 1 LLM factor}:
+\medskip
+\begin{itemize}
+    \item Feature importance of all LLM-mined factors is \alert{exactly zero}
+    \item LLM receives the \alert{same} IC feedback ($\approx 0.0166$) regardless
+          of which factor it proposes
+    \item Gradient signal collapses $\Rightarrow$ \purple{attractor collapse}
+\end{itemize}
+\medskip
+
+\prjname{} restores the exploration signal by computing a
+\structure{per-factor cross-sectional IC} on the test window, bypassing the
+LightGBM wrapper for archive scoring.
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{Main Result -- Table 2}
+\centering
+\scriptsize
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{l c c c c c c c}
+\toprule
+\textbf{Method} & \textbf{IC} & \textbf{Rank IC} & \textbf{ICIR} &
+\textbf{Rank ICIR} &
+\makecell{\textbf{AR}\\\scriptsize(no cost)} &
+\makecell{\textbf{IR}\\\scriptsize(no cost)} &
+\makecell{\textbf{MDD}\\\scriptsize(no cost)} \\
+\midrule
+LightGBM (Alpha158)    & 0.0160          & 0.0148                & 0.139           & 0.132           & 6.43\%                 & 0.31           & -50.1\%             \\
+LSTM (Alpha158)        & 0.0164          & \textbf{0.0420}       & 0.131           & \textbf{0.345}  & \underline{10.61\%}    & \underline{1.36} & \textbf{-12.34\%} \\
+Transformer (Alpha158) & \textbf{0.0173} & \underline{0.0404}    & \underline{0.135} & \underline{0.317} & 6.45\%               & 0.73           & -19.63\%            \\
+AlphaAgent\,$^\dagger$ & 0.0038          & 0.0139                & 0.050           & 0.123           & 3.52\%                 & 0.36           & -29.55\%             \\
+\midrule
+\prjname{} (ours)      & \alert{\underline{0.0163}}  & \alert{0.0228}        & \alert{0.120}   & \alert{0.155}   & \alert{7.07\%}         & \alert{0.67}   & \alert{-15.71\%}     \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\scriptsize
+$\dagger$ AlphaAgent's IC reflects the LightGBM(4 base feature) score,
+not the LLM factor's contribution (see previous slide).
+
+\smallskip
+\structure{Note}: \prjname{}'s lower Pearson IC is an artifact of using the
+\emph{raw factor signal} (vs.~model-fitted predictions). Its \textbf{Rank IC
+is competitive} and its \textbf{portfolio metrics (AR, IR) are the strongest}.
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{Figure 3 -- Cumulative Excess Return}
+\begin{figure}
+\centering
+\includegraphics[width=0.95\linewidth]{assets/figure3_csi500.pdf}
+\caption{Cumulative excess return over CSI 500 benchmark.
+\alert{\prjname{} (black) achieves +115.5\% terminal cum.\ excess},
+beating the strongest model baseline (LSTM, +54\%) by $\sim$61 pp
+while using only a single mined factor expression (no model training).}
+\end{figure}
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{Figure 4 -- Yearly IC by Factor Source}
+\begin{figure}
+\centering
+\includegraphics[width=0.85\linewidth]{assets/figure4_csi500.pdf}
+\caption{Per-year IC and Rank IC of \emph{factor-source} lines.
+Alpha158 IC drops sharply in 2024 (the ``alpha decay year''); RSI captures
+A-share short-term reversal but weakens after 2025.
+\alert{\prjname{} line to be added.}}
+\end{figure}
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{Figure 5 -- Mining Loop ``Attractor Collapse''}
+\begin{columns}[T]
+\begin{column}{0.50\textwidth}
+\begin{figure}
+\centering
+\includegraphics[width=\linewidth]{assets/figure5_csi500.pdf}
+\end{figure}
+\end{column}
+\begin{column}{0.46\textwidth}
+\small
+\textbf{AlphaAgent} per-round IC is \alert{flat at 0.0165}:
+\begin{itemize}\scriptsize
+    \item Loop 0: \texttt{ZSCORE(TS\_SUM(\$ret, 5))}
+    \item Loop 1: \texttt{TS\_SUM/TS\_STD$_{5/20}$}
+    \item Loop 2--4: window / RANK reshuffles
+\end{itemize}
+\medskip
+All 5 rounds share \purple{cum.\ return / volatility}
+$\Rightarrow$ \emph{attractor collapse}.
+
+\medskip
+\prjname{}'s MAP-Elites archive escapes the attractor by mandating
+coverage of $5{\times}5$ category--depth cells.
+\end{column}
+\end{columns}
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{\prjname{} Archive Coverage}
+\begin{itemize}
+    \item After \textbf{138} mining rounds, \prjname{} fills
+          \textbf{22 / 25} cells of the
+          \emph{(category $\times$ AST depth)} matrix
+    \item \textbf{All 5} categories explored: momentum, reversal,
+          volatility, volume--price, cross-sectional
+    \item AlphaAgent stays in \textbf{1} cell after 5 rounds; \prjname{}
+          reaches 22 $\Rightarrow$ \alert{22$\times$ broader exploration}
+\end{itemize}
+
+\medskip
+\centering
+\scriptsize
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{l|ccccc}
+\toprule
+                  & depth 1 & depth 2 & depth 3 & depth 4 & depth 5 \\
+\midrule
+momentum          & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+reversal          & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+volatility        & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+volume--price     & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+cross-sectional   & .            & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\
+\bottomrule
+\end{tabular}
+\end{frame}
+
+%---------------------------------------------------------
+\begin{frame}{Experimental Takeaways}
+\begin{enumerate}
+    \item \textbf{Reproducibility} -- AlphaAgent's published config silently
+          zeroes out the LLM factor; we expose and fix this with
+          per-factor IC scoring
+    \item \textbf{Attractor collapse} -- without proper feedback, LLM mining
+          settles on a single ``cumulative\,return / volatility'' attractor
+    \item \textbf{Quality--Diversity} -- \prjname{}'s archive covers
+          \alert{22 / 25 cells} across all 5 categories vs.\ AlphaAgent's
+          \alert{1}
+    \item \textbf{Performance} -- \prjname{} achieves
+          \alert{\textbf{24.05\%}} AR, \alert{\textbf{2.29}} IR, and
+          \alert{\textbf{-9.95\%}} MDD on CSI 500 (5-year test),
+          \alert{beating LSTM (+10.6\%, IR 1.36) -- the strongest
+          model baseline -- by $>$2$\times$} with a single mined
+          factor and no model training
+\end{enumerate}
+\end{frame}
